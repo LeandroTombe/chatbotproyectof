@@ -335,7 +335,7 @@ class TestInMemoryVectorStoreSearch:
         assert results[0].chunk.id == "chunk1"
     
     def test_search_by_document(self):
-        """Prueba filtro por documento"""
+        """Prueba filtro por documento usando where"""
         store = InMemoryVectorStore(dimension=2)
         
         chunks = [
@@ -356,7 +356,7 @@ class TestInMemoryVectorStoreSearch:
         ]
         store.add_chunks(chunks)
         
-        results = store.search([1.0, 0.0], document_id="doc1")
+        results = store.search([1.0, 0.0], where={"document_id": "doc1"})
         
         assert all(r.chunk.document_id == "doc1" for r in results)
     
@@ -625,6 +625,101 @@ class TestInMemoryVectorStoreCount:
         
         store.delete_chunk("chunk0")
         assert store.count() == 4
+
+
+    def test_search_by_chunk_index(self):
+        """Prueba filtro por chunk_index usando where"""
+        store = InMemoryVectorStore(dimension=2)
+        
+        chunks = [
+            Chunk(
+                id="chunk1",
+                document_id="doc1",
+                content="first chunk",
+                chunk_index=0,
+                embedding=[1.0, 0.0]
+            ),
+            Chunk(
+                id="chunk2",
+                document_id="doc1",
+                content="second chunk",
+                chunk_index=1,
+                embedding=[1.0, 0.0]
+            )
+        ]
+        store.add_chunks(chunks)
+        
+        results = store.search([1.0, 0.0], where={"chunk_index": 0})
+        
+        assert len(results) == 1
+        assert results[0].chunk.chunk_index == 0
+    
+    def test_search_by_metadata(self):
+        """Prueba filtro por metadatos personalizados usando where"""
+        store = InMemoryVectorStore(dimension=2)
+        
+        chunks = [
+            Chunk(
+                id="chunk1",
+                document_id="doc1",
+                content="premium content",
+                chunk_index=0,
+                embedding=[1.0, 0.0],
+                metadata={"tier": "premium"}
+            ),
+            Chunk(
+                id="chunk2",
+                document_id="doc1",
+                content="free content",
+                chunk_index=1,
+                embedding=[1.0, 0.0],
+                metadata={"tier": "free"}
+            )
+        ]
+        store.add_chunks(chunks)
+        
+        results = store.search([1.0, 0.0], where={"tier": "premium"})
+        
+        assert len(results) == 1
+        assert results[0].chunk.metadata.get("tier") == "premium"
+    
+    def test_search_with_multiple_filters(self):
+        """Prueba con múltiples filtros en where"""
+        store = InMemoryVectorStore(dimension=2)
+        
+        chunks = [
+            Chunk(
+                id="chunk1",
+                document_id="doc1",
+                content="chunk 1",
+                chunk_index=0,
+                embedding=[1.0, 0.0],
+                metadata={"category": "tech"}
+            ),
+            Chunk(
+                id="chunk2",
+                document_id="doc1",
+                content="chunk 2",
+                chunk_index=1,
+                embedding=[1.0, 0.0],
+                metadata={"category": "science"}
+            ),
+            Chunk(
+                id="chunk3",
+                document_id="doc2",
+                content="chunk 3",
+                chunk_index=0,
+                embedding=[1.0, 0.0],
+                metadata={"category": "tech"}
+            )
+        ]
+        store.add_chunks(chunks)
+        
+        # Filtrar por documento Y categoría
+        results = store.search([1.0, 0.0], where={"document_id": "doc1", "category": "tech"})
+        
+        assert len(results) == 1
+        assert results[0].chunk.id == "chunk1"
 
 
 class TestEdgeCases:

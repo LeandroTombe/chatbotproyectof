@@ -135,7 +135,7 @@ class BaseVectorStore(ABC):
         query_embedding: List[float],
         top_k: Optional[int] = None,
         min_score: Optional[float] = None,
-        document_id: Optional[str] = None
+        where: Optional[Dict[str, Any]] = None
     ) -> List[SearchResult]:
         """
         Busca los chunks más similares a un embedding de consulta.
@@ -312,7 +312,7 @@ class InMemoryVectorStore(BaseVectorStore):
         query_embedding: List[float],
         top_k: Optional[int] = None,
         min_score: Optional[float] = None,
-        document_id: Optional[str] = None
+        where: Optional[Dict[str, Any]] = None
     ) -> List[SearchResult]:
         """
         Busca chunks similares usando similitud coseno.
@@ -321,7 +321,7 @@ class InMemoryVectorStore(BaseVectorStore):
             query_embedding: Vector de consulta
             top_k: Número de resultados
             min_score: Score mínimo
-            document_id: Filtrar por documento
+            where: Filtros de metadatos (ej: {"document_id": "doc1"})
             
         Returns:
             Lista de SearchResult ordenados por score
@@ -334,11 +334,12 @@ class InMemoryVectorStore(BaseVectorStore):
         k = top_k if top_k is not None else self.config.top_k
         min_s = min_score if min_score is not None else self.config.min_score
         
-        # Filtrar chunks por documento si se especifica
-        chunks_to_search = self._chunks.values()
-        if document_id:
+        # Filtrar chunks por metadatos si se especifica
+        chunks_to_search = list(self._chunks.values())
+        if where:
             chunks_to_search = [
-                c for c in chunks_to_search if c.document_id == document_id
+                c for c in chunks_to_search
+                if self._matches_filter(c, where)
             ]
         
         # Calcular similitudes
@@ -434,8 +435,30 @@ class InMemoryVectorStore(BaseVectorStore):
         Returns:
             Número de chunks
         """
-        return len(self._chunks)
-    
+        return len(self._chunks)    
+    def _matches_filter(self, chunk: Chunk, where: Dict[str, Any]) -> bool:
+        """
+        Verifica si un chunk coincide con los filtros especificados.
+        
+        Args:
+            chunk: Chunk a verificar
+            where: Diccionario de filtros
+            
+        Returns:
+            True si el chunk coincide con todos los filtros
+        """
+        for key, value in where.items():
+            # Verificar atributos directos del chunk
+            if key == "document_id":
+                if chunk.document_id != value:
+                    return False
+            elif key == "chunk_index":
+                if chunk.chunk_index != value:
+                    return False
+            # Verificar en metadata
+            elif chunk.metadata.get(key) != value:
+                return False
+        return True    
     def clear(self) -> None:
         """
         Elimina todos los chunks del almacén.

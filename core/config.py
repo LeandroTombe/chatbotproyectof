@@ -35,3 +35,10 @@ LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 PORT = int(os.getenv("PORT", 5000))
 HOST = os.getenv("HOST", "127.0.0.1")
+
+# Chroma Configuration
+CHROMA_DIR = DATA_DIR / "chroma"
+CHROMA_DIR.mkdir(exist_ok=True)
+
+CHROMA_PERSIST = True
+CHROMA_COLLECTION_NAME = "chatbot_collection"
