@@ -33,7 +33,8 @@ class ChromaVectorStore(BaseVectorStore):
         dimension: int,
         config: Optional[RetrievalConfig] = None,
         collection_name: Optional[str] = None,
-        persist_directory: Optional[str] = None
+        persist_directory: Optional[str] = None,
+        **kwargs
     ):
         """
         Initialize ChromaDB vector store.

@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     # ========================================================================
     DATA_DIR: str = "data/pdfs"
     
+    # ========================================================================
+    # VECTOR STORE CONFIGURATION
+    # ========================================================================
+    VECTOR_STORE_TYPE: str = "memory"  # Available: "memory", "chroma"
+    CHROMA_PERSIST_DIRECTORY: str = "data/chroma"
+    CHROMA_COLLECTION_NAME: str = "chatbot_collection"
+    
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

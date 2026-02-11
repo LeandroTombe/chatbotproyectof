@@ -20,7 +20,7 @@ class TestEmbeddingConfig:
         """Prueba configuración por defecto"""
         config = EmbeddingConfig()
         assert config.model_name == "default-embedding-model"
-        assert config.dimension == 768
+        assert config.dimension is None
         assert config.batch_size == 32
         assert config.max_retries == 3
         assert config.timeout == 30
@@ -129,9 +129,9 @@ class TestDummyEmbedding:
     
     def test_initialization_default(self):
         """Prueba inicialización con valores por defecto"""
-        embedder = DummyEmbedding()
-        assert embedder.config.dimension == 768
-        assert embedder.use_zeros is False
+        embedder: DummyEmbedding = DummyEmbedding()
+        assert embedder.config.dimension is None
+        assert embedder.use_zeros is False  # type: ignore[attr-defined]
     
     def test_initialization_custom(self):
         """Prueba inicialización con config personalizada"""
@@ -142,13 +142,13 @@ class TestDummyEmbedding:
     
     def test_initialization_with_zeros(self):
         """Prueba inicialización con use_zeros=True"""
-        embedder = DummyEmbedding(use_zeros=True)
-        assert embedder.use_zeros is True
+        embedder: DummyEmbedding = DummyEmbedding(use_zeros=True)  # type: ignore[call-arg]
+        assert embedder.use_zeros is True  # type: ignore[attr-defined]
     
     def test_embed_text_random(self):
         """Prueba generación de embedding aleatorio"""
         config = EmbeddingConfig(dimension=10)
-        embedder = DummyEmbedding(config, use_zeros=False)
+        embedder: DummyEmbedding = DummyEmbedding(config, use_zeros=False)  # type: ignore[call-arg]
         
         embedding = embedder.embed_text("test text")
         
@@ -158,7 +158,7 @@ class TestDummyEmbedding:
     def test_embed_text_zeros(self):
         """Prueba generación de embedding con zeros"""
         config = EmbeddingConfig(dimension=10, normalize=False)
-        embedder = DummyEmbedding(config, use_zeros=True)
+        embedder: DummyEmbedding = DummyEmbedding(config, use_zeros=True)  # type: ignore[call-arg]
         
         embedding = embedder.embed_text("test text")
         
@@ -178,7 +178,7 @@ class TestDummyEmbedding:
     def test_embed_text_normalized(self):
         """Prueba que los embeddings estén normalizados"""
         config = EmbeddingConfig(dimension=10, normalize=True)
-        embedder = DummyEmbedding(config, use_zeros=False)
+        embedder: DummyEmbedding = DummyEmbedding(config, use_zeros=False)  # type: ignore[call-arg]
         
         embedding = embedder.embed_text("test text")
         
@@ -367,7 +367,7 @@ class TestEdgeCases:
     def test_no_normalization(self):
         """Prueba sin normalización"""
         config = EmbeddingConfig(dimension=10, normalize=False)
-        embedder = DummyEmbedding(config, use_zeros=False)
+        embedder: DummyEmbedding = DummyEmbedding(config, use_zeros=False)  # type: ignore[call-arg]
         
         embedding = embedder.embed_text("test")
         

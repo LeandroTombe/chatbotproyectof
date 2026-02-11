@@ -10,7 +10,7 @@ from config.settings import settings
 from domain.models import ChunkingConfig
 from embeddings.base import EmbeddingConfig
 from embeddings.factory import create_embedder
-from vectorstore.base import InMemoryVectorStore
+from vectorstore import create_vector_store, BaseVectorStore
 from processing.chunking import TextChunker
 from documents.processor import DocumentProcessor
 from retrieval.retriever import DocumentRetriever
@@ -62,9 +62,27 @@ def setup_components():
     )
     print(f"✓ Embedder: {embedder} (provider: {settings.EMBEDDING_PROVIDER})")
     
-    # 2. Vector Store
-    vector_store = InMemoryVectorStore(dimension=settings.EMBEDDING_DIMENSION)
-    print(f"✓ Vector Store: {vector_store}")
+    # 2. Vector Store using factory pattern (no if/else needed)
+    try:
+        vector_store = create_vector_store(
+            provider=settings.VECTOR_STORE_TYPE,
+            dimension=settings.EMBEDDING_DIMENSION,
+            collection_name=settings.CHROMA_COLLECTION_NAME,
+            persist_directory=settings.CHROMA_PERSIST_DIRECTORY
+        )
+        print(f"✓ Vector Store: {settings.VECTOR_STORE_TYPE.capitalize()}")
+        if settings.VECTOR_STORE_TYPE == "chroma":
+            print(f"   Collection: {settings.CHROMA_COLLECTION_NAME}")
+            print(f"   Directory: {settings.CHROMA_PERSIST_DIRECTORY}")
+    except ValueError as e:
+        # Fallback to memory if provider not found
+        print(f"⚠️  {e}")
+        print(f"⚠️  Falling back to 'memory' vector store")
+        vector_store = create_vector_store(
+            provider="memory",
+            dimension=settings.EMBEDDING_DIMENSION
+        )
+        print(f"✓ Vector Store: Memory (non-persistent)")
     
     # 3. Chunking configuration
     chunking_config = ChunkingConfig(
@@ -270,12 +288,12 @@ def demo_get_context(retriever: DocumentRetriever, query: str, top_k: int = 3):
         return None
 
 
-def show_vector_store_stats(vector_store: InMemoryVectorStore):
+def show_vector_store_stats(vector_store: BaseVectorStore):
     """
     Display vector store statistics.
     
     Args:
-        vector_store: InMemoryVectorStore instance
+        vector_store: BaseVectorStore instance
     """
     print_separator("VECTOR STORE STATISTICS")
     
@@ -285,8 +303,12 @@ def show_vector_store_stats(vector_store: InMemoryVectorStore):
     print(f"   Total Chunks: {total_chunks}")
     print(f"   Dimension: {vector_store.dimension}")
     
-    if total_chunks > 0:
-        all_chunks = vector_store.get_all_chunks()
+    # Only show breakdown for stores that support get_all_chunks (e.g., InMemory)
+    if total_chunks > 0 and hasattr(vector_store, 'get_all_chunks'):
+        try:
+            all_chunks = vector_store.get_all_chunks()  # type: ignore
+        except Exception:
+            return
         
         # Get unique documents
         unique_docs = set(chunk.document_id for chunk in all_chunks)

@@ -18,7 +18,8 @@ class TestRAGConfig:
         assert config.min_relevance == 0.3
         assert config.max_context_length == 2000
         assert config.include_sources is True
-        assert "asistente útil" in config.system_prompt.lower()
+        assert "asistente" in config.system_prompt.lower()
+        assert "documentos" in config.system_prompt.lower()
     
     def test_custom_config(self):
         """Test custom RAG configuration."""

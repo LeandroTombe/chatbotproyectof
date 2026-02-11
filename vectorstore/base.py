@@ -250,7 +250,7 @@ class InMemoryVectorStore(BaseVectorStore):
     No persistente - los datos se pierden al terminar el proceso.
     """
     
-    def __init__(self, dimension: int, config: Optional[RetrievalConfig] = None):
+    def __init__(self, dimension: int, config: Optional[RetrievalConfig] = None, **kwargs):
         """
         Inicializa el vector store en memoria.
         

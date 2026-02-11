@@ -90,6 +90,20 @@ class BaseEmbedding(ABC):
     def embed_text(self, text: str) -> List[float]:
         pass
     
+    def embed_query(self, query: str) -> List[float]:
+        """
+        Generate embedding for a search query.
+        Default implementation just calls embed_text.
+        Subclasses can override for query-specific behavior.
+        
+        Args:
+            query: Search query text
+            
+        Returns:
+            Embedding vector
+        """
+        return self.embed_text(query)
+    
     def embed_texts(self, texts: List[str]) -> List[List[float]]:
         if not texts:
             logger.warning("Empty text list provided")
@@ -175,14 +189,17 @@ class DummyEmbedding(BaseEmbedding):
     Genera embeddings aleatorios o ceros para testing.
     
     Provider name: "dummy"
+    
+    Attributes:
+        use_zeros: If True, generates zero vectors; if False, generates random vectors
     """
     
     def __init__(
         self,
         config: Optional[EmbeddingConfig] = None,
         use_zeros: bool = False
-    ):
-        self.use_zeros = use_zeros
+    ) -> None:
+        self.use_zeros: bool = use_zeros
         super().__init__(config)
     
     def _validate_provider(self) -> None:
