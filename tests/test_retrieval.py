@@ -273,11 +273,13 @@ class TestRetrievalServiceRetrieveContext:
     
     def test_retrieve_context_contains_separator(self):
         """Prueba que el contexto use el separador"""
-        context = self.service.retrieve_context("query", separator="\n---\n")
+        separator = "\n---\n"
+        context = self.service.retrieve_context("query", separator=separator)
         
-        # Si hay más de un resultado, debe contener el separador
-        if self.service.retrieve_simple("query"):
-            assert "\n---\n" in context or len(context.split(".")) == 1
+        # Si hay más de un chunk en los resultados, debe contener el separador
+        results = self.service.retrieve_simple("query")
+        if len(results) > 1:
+            assert separator in context
     
     def test_retrieve_context_custom_separator(self):
         """Prueba con separador personalizado"""
