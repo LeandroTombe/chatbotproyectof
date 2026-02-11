@@ -165,9 +165,16 @@ class BaseEmbedding(ABC):
 # DUMMY PROVIDER
 # =========================
 
+# Import here to avoid circular dependency
+from embeddings.factory import register_provider
+
+@register_provider("dummy")
 class DummyEmbedding(BaseEmbedding):
     """
     Implementación dummy para testing.
+    Genera embeddings aleatorios o ceros para testing.
+    
+    Provider name: "dummy"
     """
     
     def __init__(

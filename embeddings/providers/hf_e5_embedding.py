@@ -9,17 +9,21 @@ from embeddings.base import (
     EmbeddingConfig,
     EmbeddingException,
 )
+from embeddings.factory import register_provider
 
 logger = logging.getLogger(__name__)
 
 
+@register_provider("hf-e5")
 class HFMultilingualE5Embedding(BaseEmbedding):
     """
-    Embedding provider using intfloat/multilingual-e5-large from HuggingFace.
+    Embedding provider using intfloat/multilingual-e5 from HuggingFace.
     
     This model requires prefixes:
     - "query: " for search queries
     - "passage: " for documents/chunks
+    
+    Provider name: "hf-e5"
     """
 
     def __init__(self, config: EmbeddingConfig):

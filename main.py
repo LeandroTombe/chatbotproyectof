@@ -6,13 +6,20 @@ from pathlib import Path
 from typing import Optional
 import logging
 
+from config.settings import settings
 from domain.models import ChunkingConfig
-from embeddings.base import DummyEmbedding, EmbeddingConfig
+from embeddings.base import EmbeddingConfig
+from embeddings.factory import create_embedder
 from vectorstore.base import InMemoryVectorStore
 from processing.chunking import TextChunker
 from documents.processor import DocumentProcessor
 from retrieval.retriever import DocumentRetriever
 from ingestion.pipeline import IngestionPipeline
+from chat.llm_clients.ollama_client import OllamaClient
+from chat.llm_clients.base import LLMConfig, LLMConnectionError
+from chat.rag_service import RAGService, RAGConfig
+from chat.security import SecurityConfig
+from chat.models import Message, MessageRole
 
 # Setup logging
 logging.basicConfig(
@@ -43,22 +50,27 @@ def setup_components():
     
     # 1. Embedding configuration
     embedding_config = EmbeddingConfig(
-        model_name="dummy-embeddings",
-        dimension=768,
-        batch_size=32
+        model_name=settings.EMBEDDING_MODEL,
+        dimension=settings.EMBEDDING_DIMENSION,
+        batch_size=settings.EMBEDDING_BATCH_SIZE
     )
-    embedder = DummyEmbedding(config=embedding_config)
-    print(f"✓ Embedder: {embedder}")
+    
+    # Create embedder using factory pattern (no if/else needed)
+    embedder = create_embedder(
+        provider=settings.EMBEDDING_PROVIDER,
+        config=embedding_config
+    )
+    print(f"✓ Embedder: {embedder} (provider: {settings.EMBEDDING_PROVIDER})")
     
     # 2. Vector Store
-    vector_store = InMemoryVectorStore(dimension=768)
+    vector_store = InMemoryVectorStore(dimension=settings.EMBEDDING_DIMENSION)
     print(f"✓ Vector Store: {vector_store}")
     
     # 3. Chunking configuration
     chunking_config = ChunkingConfig(
-        chunk_size=1000,
-        chunk_overlap=200,
-        separator="\n\n"
+        chunk_size=settings.CHUNK_SIZE,
+        chunk_overlap=settings.CHUNK_OVERLAP,
+        separator=settings.CHUNK_SEPARATOR
     )
     chunker = TextChunker(config=chunking_config)
     print(f"✓ Chunker: chunk_size={chunking_config.chunk_size}, overlap={chunking_config.chunk_overlap}")
@@ -288,6 +300,214 @@ def show_vector_store_stats(vector_store: InMemoryVectorStore):
                 print(f"   - {doc_id}: {len(doc_chunks)} chunks")
 
 
+def setup_chat_service(
+    retriever: DocumentRetriever
+) -> Optional[RAGService]:
+    """
+    Initialize the chat service with Ollama.
+    
+    Args:
+        retriever: DocumentRetriever instance
+        
+    Returns:
+        RAGService instance or None if Ollama is not available
+    """
+    print_separator("SETTING UP CHAT SERVICE")
+    
+    print(f"🤖 Initializing Ollama client...")
+    print(f"   Model: {settings.OLLAMA_MODEL}")
+    print(f"   Base URL: {settings.OLLAMA_BASE_URL}")
+    
+    # 1. LLM Configuration
+    llm_config = LLMConfig(
+        model_name=settings.OLLAMA_MODEL,
+        temperature=settings.OLLAMA_TEMPERATURE,
+        max_tokens=settings.OLLAMA_MAX_TOKENS,
+        timeout=settings.OLLAMA_TIMEOUT
+    )
+    
+    # 2. Create Ollama client
+    ollama_client = OllamaClient(llm_config, base_url=settings.OLLAMA_BASE_URL)
+    
+    # 3. Check if Ollama is available
+    if not ollama_client.is_available():
+        print(f"\n⚠️  Ollama is not running at {settings.OLLAMA_BASE_URL}")
+        print(f"   To use the chat service:")
+        print(f"   1. Install Ollama from https://ollama.ai")
+        print(f"   2. Run: ollama serve")
+        print(f"   3. Pull a model: ollama pull {settings.OLLAMA_MODEL}")
+        print(f"\n   Skipping chat service setup...\n")
+        return None
+    
+    print(f"✓ Ollama is running!")
+    
+    # 4. Get model info
+    try:
+        model_info = ollama_client.get_model_info()
+        
+        if not model_info['available']:
+            print(f"\n⚠️  Model '{settings.OLLAMA_MODEL}' is not available")
+            print(f"   Available models: {', '.join(model_info['all_models'])}")
+            print(f"\n   To pull the model:")
+            print(f"   ollama pull {settings.OLLAMA_MODEL}")
+            print(f"\n   Skipping chat service setup...\n")
+            return None
+        
+        print(f"✓ Model '{settings.OLLAMA_MODEL}' is available")
+        
+    except Exception as e:
+        print(f"⚠️  Could not get model info: {e}")
+    
+    # 5. RAG Configuration
+    rag_config = RAGConfig(
+        top_k=settings.RAG_TOP_K,
+        min_relevance=settings.RAG_MIN_RELEVANCE,
+        max_context_length=settings.RAG_MAX_CONTEXT_LENGTH,
+        include_sources=settings.RAG_INCLUDE_SOURCES,
+        strict_mode=settings.RAG_STRICT_MODE,
+        system_prompt=settings.RAG_SYSTEM_PROMPT
+    )
+    
+    # 6. Security configuration
+    security_config = SecurityConfig(
+        enabled=settings.RAG_ENABLE_SECURITY
+    )
+    
+    # 7. Create RAG service
+    rag_service = RAGService(
+        retriever=retriever,
+        llm_client=ollama_client,
+        config=rag_config,
+        security_config=security_config
+    )
+    
+    print(f"✓ RAG Service initialized")
+    print(f"\n✅ Chat service ready!")
+    
+    # 7. Pre-warm the model with a simple query
+    print(f"\n🔥 Pre-warming model (primera consulta puede tardar)...")
+    try:
+        warmup_messages = [
+            Message(MessageRole.USER, "Hi")
+        ]
+        ollama_client.generate(warmup_messages, max_tokens=10)
+        print(f"✓ Model is ready!\n")
+    except Exception as e:
+        print(f"⚠️  Model warmup warning: {e}")
+        print(f"   Continuing anyway...\n")
+    
+    return rag_service
+
+
+def demo_chat(rag_service: RAGService, query: str):
+    """
+    Demonstrate a single chat interaction.
+    
+    Args:
+        rag_service: RAGService instance
+        query: User query
+    """
+    print_separator("DEMO: RAG CHAT")
+    
+    print(f"👤 User: {query}")
+    print(f"\n🤔 Processing...")
+    
+    try:
+        response = rag_service.chat(query)
+        
+        print(f"\n🤖 Assistant: {response.content}")
+        
+        if response.sources:
+            print(f"\n📚 Sources ({len(response.sources)}):")
+            for idx, source in enumerate(response.sources, 1):
+                print(f"   [{idx}] Document: {source.document_id}")
+                print(f"       Relevance: {source.relevance_score:.2f}")
+                print(f"       Content: {source.content[:100]}...")
+                print()
+        
+        print(f"ℹ️  Metadata:")
+        print(f"   Model: {response.metadata.get('model')}")
+        print(f"   Sources used: {response.metadata.get('num_sources')}")
+        print(f"   Has context: {response.metadata.get('has_context')}")
+        
+        return response
+        
+    except LLMConnectionError as e:
+        print(f"\n❌ Connection Error: {str(e)}")
+        print(f"   Make sure Ollama is running.")
+        return None
+    except Exception as e:
+        print(f"\n❌ Error: {str(e)}")
+        logger.exception("Error in demo_chat")
+        return None
+
+
+def interactive_chat(rag_service: RAGService):
+    """
+    Interactive chat session with the RAG service.
+    
+    Args:
+        rag_service: RAGService instance
+    """
+    print_separator("INTERACTIVE CHAT")
+    
+    print("💬 Chat with your documents!")
+    print("   Commands:")
+    print("   - Type your question to chat")
+    print("   - 'clear' to clear conversation history")
+    print("   - 'history' to see conversation history")
+    print("   - 'quit' or 'exit' to exit")
+    print()
+    
+    while True:
+        try:
+            query = input("👤 You: ").strip()
+            
+            if query.lower() in ['quit', 'exit', 'q']:
+                print("\n👋 Goodbye!")
+                break
+            
+            if not query:
+                continue
+            
+            if query.lower() == 'clear':
+                rag_service.clear_conversation()
+                print("🗑️  Conversation history cleared.\n")
+                continue
+            
+            if query.lower() == 'history':
+                history = rag_service.get_conversation_history()
+                messages = history.get_messages(include_system=False)
+                
+                if not messages:
+                    print("📭 No conversation history yet.\n")
+                else:
+                    print(f"\n📜 Conversation History ({len(messages)} messages):\n")
+                    for msg in messages:
+                        role_icon = "👤" if msg.role.value == "user" else "🤖"
+                        print(f"{role_icon} {msg.role.value.capitalize()}: {msg.content[:100]}...")
+                    print()
+                continue
+            
+            # Chat
+            print("\n🤔 Thinking...")
+            response = rag_service.chat(query)
+            
+            print(f"\n🤖 Assistant: {response.content}\n")
+            
+            if response.sources:
+                print(f"📚 [{len(response.sources)} sources used]\n")
+                
+        except KeyboardInterrupt:
+            print("\n\n👋 Goodbye!")
+            break
+        except LLMConnectionError as e:
+            print(f"\n❌ Connection Error: {str(e)}")
+            print(f"   Ollama may have stopped. Please restart it.\n")
+        except Exception as e:
+            print(f"\n❌ Error: {str(e)}\n")
+
+
 def main():
     """
     Main demo function - orchestrates all demos.
@@ -301,13 +521,14 @@ def main():
     print("  2. Batch ingestion (multiple files)")
     print("  3. Semantic search (query → relevant chunks)")
     print("  4. Context extraction (for RAG)")
+    print("  5. RAG Chat with Ollama (conversational AI)")
     print()
     
     # Setup components
     processor, retriever, pipeline, vector_store = setup_components()
     
     # Configuration
-    DATA_DIR = Path("data/pdfs")
+    DATA_DIR = Path(settings.DATA_DIR)
     SAMPLE_PDF = DATA_DIR / "sample.pdf"
     
     # Demo 1: Process single file
@@ -348,42 +569,73 @@ def main():
         top_k=3
     )
     
-    # Interactive search
-    print_separator("INTERACTIVE SEARCH")
-    print("You can now query the documents interactively.")
-    print("Type your questions (or 'quit' to exit):\n")
+    # Demo 5: Setup chat service
+    print("\n")
+    response = input("Press ENTER to setup Chat Service (or 'skip' to skip chat demos)...")
     
-    while True:
-        try:
-            query = input("🔍 Query: ").strip()
-            
-            if query.lower() in ['quit', 'exit', 'q']:
-                print("\n👋 Goodbye!")
-                break
-            
-            if not query:
-                continue
-            
-            print()
-            results = retriever.search(query=query, top_k=3)
-            
-            if results:
-                print(f"Found {len(results)} results:\n")
-                for idx, result in enumerate(results, 1):
-                    print(f"{idx}. [Score: {result.score:.3f}] {result.chunk.content[:150]}...")
-                print()
-            else:
-                print("No results found.\n")
+    rag_service = None
+    if response.lower() != 'skip':
+        rag_service = setup_chat_service(
+            retriever=retriever
+        )
+    
+    if rag_service:
+        # Demo 6: Single chat interaction
+        print("\n")
+        input("Press ENTER to start Demo 5: RAG Chat...")
+        
+        demo_chat(
+            rag_service,
+            query="¿Cuál es el tema principal del documento?"
+        )
+        
+        # Demo 7: Interactive chat
+        print("\n")
+        response = input("Press ENTER to start Interactive Chat (or 'skip' to skip)...")
+        
+        if response.lower() != 'skip':
+            interactive_chat(rag_service)
+    else:
+        print("\n⚠️  Chat service not available. Skipping chat demos.\n")
+    
+    # Interactive search (non-chat)
+    if not rag_service or response.lower() == 'skip':
+        print_separator("INTERACTIVE SEARCH")
+        print("You can now query the documents interactively.")
+        print("Type your questions (or 'quit' to exit):\n")
+        
+        while True:
+            try:
+                query = input("🔍 Query: ").strip()
                 
-        except KeyboardInterrupt:
-            print("\n\n👋 Goodbye!")
-            break
-        except Exception as e:
-            print(f"\n❌ Error: {str(e)}\n")
+                if query.lower() in ['quit', 'exit', 'q']:
+                    print("\n👋 Goodbye!")
+                    break
+                
+                if not query:
+                    continue
+                
+                print()
+                results = retriever.search(query=query, top_k=3)
+                
+                if results:
+                    print(f"Found {len(results)} results:\n")
+                    for idx, result in enumerate(results, 1):
+                        print(f"{idx}. [Score: {result.score:.3f}] {result.chunk.content[:150]}...")
+                    print()
+                else:
+                    print("No results found.\n")
+                    
+            except KeyboardInterrupt:
+                print("\n\n👋 Goodbye!")
+                break
+            except Exception as e:
+                print(f"\n❌ Error: {str(e)}\n")
     
     print_separator("DEMO COMPLETED")
     print("Thank you for trying the ChatBot RAG System!")
     print()
+
 
 
 if __name__ == "__main__":
