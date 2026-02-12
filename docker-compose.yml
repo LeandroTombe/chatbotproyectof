@@ -1,0 +1,127 @@
+# ============================================================================
+# Docker Compose Configuration for ChatBot RAG Project
+# ============================================================================
+
+services:
+  # ==========================================================================
+  # Ollama Service - LLM Server
+  # ==========================================================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: chatbot-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    environment:
+      - OLLAMA_ORIGINS=*
+      - OLLAMA_HOST=0.0.0.0
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    # Configuración de GPU (descomentala si tienes NVIDIA GPU disponible)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    
+    # Límites de recursos (sin GPU)
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+    networks:
+      - chatbot-network
+
+  # ==========================================================================
+  # ChatBot Application
+  # ==========================================================================
+  chatbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chatbot-app
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      # Ollama Configuration
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2}
+      - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-180}
+      - OLLAMA_MAX_TOKENS=${OLLAMA_MAX_TOKENS:-300}
+      - OLLAMA_TEMPERATURE=${OLLAMA_TEMPERATURE:-0.7}
+      
+      # RAG Configuration
+      - RAG_TOP_K=${RAG_TOP_K:-2}
+      - RAG_MIN_RELEVANCE=${RAG_MIN_RELEVANCE:-0.3}
+      - RAG_MAX_CONTEXT_LENGTH=${RAG_MAX_CONTEXT_LENGTH:-1000}
+      - RAG_INCLUDE_SOURCES=${RAG_INCLUDE_SOURCES:-True}
+      - RAG_STRICT_MODE=${RAG_STRICT_MODE:-True}
+      - RAG_ENABLE_SECURITY=${RAG_ENABLE_SECURITY:-True}
+      
+      # Embeddings Configuration
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-hf-e5}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-intfloat/multilingual-e5-small}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-384}
+      
+      # Chunking Configuration
+      - CHUNK_SIZE=${CHUNK_SIZE:-1000}
+      - CHUNK_OVERLAP=${CHUNK_OVERLAP:-200}
+      - CHUNK_SEPARATOR=${CHUNK_SEPARATOR:-\n\n}
+      
+      # Vector Store Configuration
+      - VECTOR_STORE_TYPE=${VECTOR_STORE_TYPE:-chroma}
+      
+      # HuggingFace Cache
+      - HF_HOME=/app/models
+      - TRANSFORMERS_CACHE=/app/models
+    volumes:
+      # Application data
+      - ./data:/app/data
+      - ./documents:/app/documents
+      - ./logs:/app/logs
+      
+      # Persistent storage
+      - chatbot_models:/app/models
+      - chatbot_vectorstore:/app/vectorstore_data
+    restart: unless-stopped
+    networks:
+      - chatbot-network
+    stdin_open: true
+    tty: true
+    # Uncomment to expose API port in the future
+    # ports:
+    #   - "8000:8000"
+
+# ============================================================================
+# Volumes
+# ============================================================================
+volumes:
+  ollama_models:
+    name: chatbot-ollama-models
+    driver: local
+  
+  chatbot_models:
+    name: chatbot-hf-models
+    driver: local
+  
+  chatbot_vectorstore:
+    name: chatbot-vectorstore-data
+    driver: local
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  chatbot-network:
+    name: chatbot-network
+    driver: bridge

@@ -149,7 +149,9 @@ activemq-data/
 
 # Environments
 .env
-.env.*
+.env.deveplopment
+.env.production
+.env.test
 .envrc
 .venv
 env/
@@ -221,3 +223,21 @@ __marimo__/
 docs/
 
 data/
+
+# ============================================================================
+# Docker
+# ============================================================================
+# Docker volumes data (mounted, will be in containers)
+vectorstore_data/
+models/
+
+# Docker backups
+backups/
+
+# Keep .env.docker template but ignore actual .env
+!.env.docker
+!.env.example
+
+# Docker override files (for local development)
+docker-compose.override.yml
+.dockerignore.local
