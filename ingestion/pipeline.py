@@ -9,7 +9,7 @@ from datetime import datetime
 import logging
 
 from domain.models import Document, ProcessingStatus
-from documents.processor import DocumentProcessor
+from ingestion.processor import DocumentProcessor
 
 logger = logging.getLogger(__name__)
 

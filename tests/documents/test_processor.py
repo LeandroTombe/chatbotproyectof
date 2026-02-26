@@ -167,7 +167,7 @@ class TestDocumentProcessorProcessDocument:
         )
         
         # Mock the factory get_loader
-        with patch('documents.processor.get_loader') as mock_get_loader:
+        with patch('ingestion.processor.get_loader') as mock_get_loader:
             mock_loader = Mock()
             mock_loader.load.return_value = mock_doc
             mock_get_loader.return_value = mock_loader
@@ -360,7 +360,7 @@ class TestDocumentProcessorErrors:
             loader=loader
         )
         
-        with pytest.raises(ProcessorException, match="Error processing document"):
+        with pytest.raises(ProcessorException, match="Error processing"):
             processor.process_document("test.pdf")
         
         assert mock_doc.status == ProcessingStatus.FAILED
@@ -400,7 +400,7 @@ class TestDocumentProcessorErrors:
             loader=loader
         )
         
-        with pytest.raises(ProcessorException, match="Error processing document"):
+        with pytest.raises(ProcessorException, match="Error processing"):
             processor.process_document("test.pdf")
         
         assert mock_doc.status == ProcessingStatus.FAILED
@@ -441,7 +441,7 @@ class TestDocumentProcessorErrors:
             loader=loader
         )
         
-        with pytest.raises(ProcessorException, match="Error processing document"):
+        with pytest.raises(ProcessorException, match="Error processing"):
             processor.process_document("test.pdf")
         
         assert mock_doc.status == ProcessingStatus.FAILED

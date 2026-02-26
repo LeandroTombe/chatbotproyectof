@@ -33,7 +33,7 @@ class TestGetLoader:
 class TestLoadDocument:
     """Tests para función de conveniencia load_document"""
     
-    @patch('documents.loaders.loader_factory.PDFLoader.load')
+    @patch('ingestion.loaders.loader_factory.PDFLoader.load')
     def test_load_document_success(self, mock_load):
         """Prueba carga exitosa de documento"""
         mock_doc = Mock(spec=Document)

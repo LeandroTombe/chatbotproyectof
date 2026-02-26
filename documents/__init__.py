@@ -1,27 +1,22 @@
 """
-Documents module.
-Provides functionality for loading and processing documents.
+documents — backward-compatibility shim.
+All symbols are now canonical under `ingestion.*`.
 """
-from documents.loaders import (
+from ingestion.loaders import (
     BaseLoader,
     LoaderException,
     PDFLoader,
     get_loader,
-    load_document
+    load_document,
 )
-from documents.processor import (
-    DocumentProcessor,
-    ProcessorException
-)
+from ingestion.processor import DocumentProcessor, ProcessorException
 
 __all__ = [
-    # Loaders
     "BaseLoader",
     "LoaderException",
     "PDFLoader",
     "get_loader",
     "load_document",
-    # Processor
     "DocumentProcessor",
-    "ProcessorException"
+    "ProcessorException",
 ]

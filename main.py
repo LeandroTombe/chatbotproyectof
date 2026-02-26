@@ -1,664 +1,685 @@
 """
-Main demo script for ChatBot RAG System.
-Demonstrates the complete document processing and retrieval pipeline.
+ChatBot RAG — Sistema de preguntas y respuestas sobre documentos.
+
+Flujo principal:
+  1. Inicializar componentes (embedder, vector store, chunker)
+  2. Ingresar documentos PDF al sistema
+  3. Buscar información relevante en los documentos
+  4. Chatear con la IA restringida a los documentos cargados
 """
+from __future__ import annotations
+
+import logging
+import sys
 from pathlib import Path
 from typing import Optional
-import logging
+
+try:
+    import tkinter as tk
+    from tkinter import filedialog as _fd
+    _TKINTER = True
+except ImportError:
+    _TKINTER = False
 
 from config.settings import settings
 from domain.models import ChunkingConfig
 from embeddings.base import EmbeddingConfig
 from embeddings.factory import create_embedder
 from vectorstore import create_vector_store, BaseVectorStore
-from processing.chunking import TextChunker
-from documents.processor import DocumentProcessor
-from retrieval.retriever import DocumentRetriever
+from ingestion.chunking import TextChunker
+from ingestion.processor import DocumentProcessor
 from ingestion.pipeline import IngestionPipeline
+from retrieval.retriever import DocumentRetriever, RetrieverException
 from chat.llm_clients.ollama_client import OllamaClient
 from chat.llm_clients.base import LLMConfig, LLMConnectionError
 from chat.rag_service import RAGService, RAGConfig
 from chat.security import SecurityConfig
 from chat.models import Message, MessageRole
 
-# Setup logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.WARNING,
+    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
+    datefmt="%H:%M:%S",
+    stream=sys.stdout,
 )
 logger = logging.getLogger(__name__)
 
 
-def print_separator(title: str = ""):
-    """Print a visual separator"""
-    if title:
-        print(f"\n{'='*80}")
-        print(f"  {title}")
-        print(f"{'='*80}\n")
-    else:
-        print(f"\n{'-'*80}\n")
+# ─────────────────────────────────────────────────────────────────────────────
+#  Utilidades de interfaz
+# ─────────────────────────────────────────────────────────────────────────────
+
+W = 60  # ancho de la caja
 
 
-def setup_components():
-    """
-    Initialize all components of the RAG system.
-    
-    Returns:
-        Tuple of (processor, retriever, pipeline)
-    """
-    print_separator("SETTING UP RAG SYSTEM COMPONENTS")
-    
-    # 1. Embedding configuration
-    embedding_config = EmbeddingConfig(
+def _titulo(texto: str) -> None:
+    """Imprime un encabezado de sección."""
+    barra = "─" * W
+    relleno = max(0, W - len(texto) - 2)
+    print(f"\n┌{barra}┐")
+    print(f"│  {texto}{' ' * relleno}│")
+    print(f"└{barra}┘\n")
+
+
+def _linea() -> None:
+    print("  " + "·" * (W - 2))
+
+
+def _ok(msg: str)   -> None: print(f"  ✓  {msg}")
+def _aviso(msg: str) -> None: print(f"  ⚠  {msg}")
+def _error(msg: str) -> None: print(f"  ✗  {msg}")
+
+
+def _leer(prompt: str) -> str:
+    """Lee una línea del usuario. Ctrl+C devuelve cadena vacía."""
+    try:
+        return input(prompt).strip()
+    except (KeyboardInterrupt, EOFError):
+        return ""
+
+
+def _abrir_explorador_archivo() -> str:
+    """Abre el explorador de Windows para seleccionar un PDF.
+    Devuelve la ruta elegida, o cadena vacía si se canceló."""
+    if not _TKINTER:
+        return ""
+    root = tk.Tk()
+    root.withdraw()          # oculta la ventana principal de tkinter
+    root.attributes("-topmost", True)   # el diálogo aparece al frente
+    ruta = _fd.askopenfilename(
+        title="Seleccioná un archivo PDF",
+        filetypes=[("Archivos PDF", "*.pdf"), ("Todos los archivos", "*.*")],
+    )
+    root.destroy()
+    return ruta or ""
+
+
+def _abrir_explorador_carpeta() -> str:
+    """Abre el explorador de Windows para seleccionar una carpeta.
+    Devuelve la ruta elegida, o cadena vacía si se canceló."""
+    if not _TKINTER:
+        return ""
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    ruta = _fd.askdirectory(
+        title="Seleccioná la carpeta con los PDFs",
+        mustexist=True,
+    )
+    root.destroy()
+    return ruta or ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Inicialización del sistema
+# ─────────────────────────────────────────────────────────────────────────────
+
+def inicializar() -> tuple[DocumentProcessor, DocumentRetriever, IngestionPipeline, BaseVectorStore]:
+    """Crea y conecta todos los componentes del pipeline RAG."""
+    _titulo("INICIALIZANDO SISTEMA")
+
+    # Embedder
+    emb_cfg = EmbeddingConfig(
         model_name=settings.EMBEDDING_MODEL,
         dimension=settings.EMBEDDING_DIMENSION,
-        batch_size=settings.EMBEDDING_BATCH_SIZE
+        batch_size=settings.EMBEDDING_BATCH_SIZE,
     )
-    
-    # Create embedder using factory pattern (no if/else needed)
-    embedder = create_embedder(
-        provider=settings.EMBEDDING_PROVIDER,
-        config=embedding_config
-    )
-    print(f"✓ Embedder: {embedder} (provider: {settings.EMBEDDING_PROVIDER})")
-    
-    # 2. Vector Store using factory pattern (no if/else needed)
+    embedder = create_embedder(provider=settings.EMBEDDING_PROVIDER, config=emb_cfg)
+    _ok(f"Embedder      : {settings.EMBEDDING_PROVIDER}  (dim={settings.EMBEDDING_DIMENSION})")
+
+    # Vector store
     try:
         vector_store = create_vector_store(
             provider=settings.VECTOR_STORE_TYPE,
             dimension=settings.EMBEDDING_DIMENSION,
             collection_name=settings.CHROMA_COLLECTION_NAME,
-            persist_directory=settings.CHROMA_PERSIST_DIRECTORY
+            persist_directory=settings.CHROMA_PERSIST_DIRECTORY,
         )
-        print(f"✓ Vector Store: {settings.VECTOR_STORE_TYPE.capitalize()}")
-        if settings.VECTOR_STORE_TYPE == "chroma":
-            print(f"   Collection: {settings.CHROMA_COLLECTION_NAME}")
-            print(f"   Directory: {settings.CHROMA_PERSIST_DIRECTORY}")
-    except ValueError as e:
-        # Fallback to memory if provider not found
-        print(f"⚠️  {e}")
-        print(f"⚠️  Falling back to 'memory' vector store")
-        vector_store = create_vector_store(
-            provider="memory",
-            dimension=settings.EMBEDDING_DIMENSION
-        )
-        print(f"✓ Vector Store: Memory (non-persistent)")
-    
-    # 3. Chunking configuration
-    chunking_config = ChunkingConfig(
+        detalle = f"  colección={settings.CHROMA_COLLECTION_NAME}" if settings.VECTOR_STORE_TYPE == "chroma" else ""
+        _ok(f"Vector store  : {settings.VECTOR_STORE_TYPE.capitalize()}{detalle}")
+    except ValueError as exc:
+        _aviso(f"{exc} — usando almacenamiento en memoria")
+        vector_store = create_vector_store(provider="memory", dimension=settings.EMBEDDING_DIMENSION)
+        _ok("Vector store  : Memoria (no persistente)")
+
+    # Chunker
+    chunk_cfg = ChunkingConfig(
         chunk_size=settings.CHUNK_SIZE,
         chunk_overlap=settings.CHUNK_OVERLAP,
-        separator=settings.CHUNK_SEPARATOR
+        separator=settings.CHUNK_SEPARATOR,
     )
-    chunker = TextChunker(config=chunking_config)
-    print(f"✓ Chunker: chunk_size={chunking_config.chunk_size}, overlap={chunking_config.chunk_overlap}")
-    
-    # 4. Document Processor
-    processor = DocumentProcessor(
-        chunker=chunker,
-        embedder=embedder,
-        vector_store=vector_store
-    )
-    print(f"✓ Document Processor: Ready")
-    
-    # 5. Document Retriever
-    retriever = DocumentRetriever(
-        embedder=embedder,
-        vector_store=vector_store
-    )
-    print(f"✓ Document Retriever: Ready")
-    
-    # 6. Ingestion Pipeline
-    pipeline = IngestionPipeline(
-        processor=processor,
-        supported_extensions=['.pdf']
-    )
-    print(f"✓ Ingestion Pipeline: Ready")
-    
-    print("\n✅ All components initialized successfully!")
-    
+    chunker = TextChunker(config=chunk_cfg)
+    _ok(f"Chunker       : tamaño={chunk_cfg.chunk_size}  solapamiento={chunk_cfg.chunk_overlap}")
+
+    # Procesador, recuperador y pipeline
+    processor = DocumentProcessor(chunker=chunker, embedder=embedder, vector_store=vector_store)
+    retriever = DocumentRetriever(embedder=embedder, vector_store=vector_store)
+    pipeline  = IngestionPipeline(processor=processor, supported_extensions=[".pdf"])
+    _ok("Procesador    : listo")
+    _ok("Recuperador   : listo  (estándar · MMR · expandida)")
+    _ok("Pipeline      : listo  (.pdf)")
+
+    print("\n  Sistema listo.\n")
     return processor, retriever, pipeline, vector_store
 
 
-def demo_process_single_file(processor: DocumentProcessor, file_path: str):
-    """
-    Demonstrate processing a single PDF file.
-    
-    Args:
-        processor: DocumentProcessor instance
-        file_path: Path to PDF file
-    """
-    print_separator("DEMO: PROCESSING SINGLE FILE")
-    
-    path = Path(file_path)
-    
+# ─────────────────────────────────────────────────────────────────────────────
+#  Ingesta de documentos
+# ─────────────────────────────────────────────────────────────────────────────
+
+def menu_ingesta(processor: DocumentProcessor, pipeline: IngestionPipeline) -> None:
+    """Submenú para cargar documentos al sistema."""
+    while True:
+        _titulo("CARGAR DOCUMENTOS")
+        print("  1  Cargar un archivo PDF")
+        print("  2  Cargar todos los PDFs de una carpeta")
+        print("  0  Volver al menú principal\n")
+
+        opcion = _leer("  Opción: ")
+
+        if opcion == "1":
+            ruta = _pedir_ruta_archivo()
+            if ruta:
+                _cargar_archivo(processor, ruta)
+        elif opcion == "2":
+            carpeta = _pedir_ruta_carpeta()
+            if carpeta:
+                _cargar_carpeta(pipeline, carpeta)
+        elif opcion in {"0", ""}:
+            break
+        else:
+            _aviso("Opción no válida.\n")
+
+
+def _pedir_ruta_archivo() -> str:
+    """Pide al usuario que elija un PDF — con explorador o escribiendo la ruta."""
+    print()
+    if _TKINTER:
+        print("  ¿Cómo querés elegir el archivo?")
+        print("    1  Abrir explorador de archivos  ← recomendado")
+        print("    2  Escribir la ruta manualmente")
+        eleccion = _leer("\n  Opción: ")
+        if eleccion != "2":
+            print("\n  Abriendo explorador…")
+            ruta = _abrir_explorador_archivo()
+            if ruta:
+                _ok(f"Archivo seleccionado: {Path(ruta).name}\n")
+                return ruta
+            _aviso("No se seleccionó ningún archivo.\n")
+            return ""
+    ruta = _leer("\n  Ruta del archivo PDF: ")
+    return ruta
+
+
+def _pedir_ruta_carpeta() -> str:
+    """Pide al usuario que elija una carpeta — con explorador o escribiendo la ruta."""
+    print()
+    if _TKINTER:
+        print("  ¿Cómo querés elegir la carpeta?")
+        print("    1  Abrir explorador de carpetas  ← recomendado")
+        print("    2  Escribir la ruta manualmente")
+        eleccion = _leer("\n  Opción: ")
+        if eleccion != "2":
+            print("\n  Abriendo explorador…")
+            ruta = _abrir_explorador_carpeta()
+            if ruta:
+                _ok(f"Carpeta seleccionada: {ruta}\n")
+                return ruta
+            _aviso("No se seleccionó ninguna carpeta.\n")
+            return ""
+    ruta = _leer("\n  Ruta de la carpeta: ")
+    return ruta or settings.DATA_DIR
+
+
+def _cargar_archivo(processor: DocumentProcessor, ruta: str) -> None:
+    path = Path(ruta)
     if not path.exists():
-        print(f"❌ File not found: {file_path}")
-        print(f"   Please place a PDF file at this location or provide a different path.")
-        return None
-    
-    print(f"📄 Processing file: {path.name}")
-    print(f"   Path: {path}")
-    
+        _error(f"Archivo no encontrado: {ruta}\n")
+        return
+
+    print(f"\n  Procesando: {path.name} …")
     try:
-        document = processor.process_document(file_path)
-        
-        print(f"\n✅ Processing completed!")
-        print(f"   Document ID: {document.id}")
-        print(f"   Status: {document.status.value}")
-        print(f"   Total Chunks: {document.total_chunks}")
-        print(f"   File Name: {document.file_name}")
-        
-        if document.processed_at:
-            print(f"   Processed At: {document.processed_at.strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        return document
-        
-    except Exception as e:
-        print(f"\n❌ Error processing file: {str(e)}")
-        logger.exception("Error in demo_process_single_file")
-        return None
+        doc = processor.process_document(ruta)
+        print()
+        _ok(f"Archivo  : {path.name}")
+        _ok(f"Estado   : {doc.status.value}")
+        _ok(f"Fragmentos generados: {doc.total_chunks}")
+        if doc.processed_at:
+            _ok(f"Finalizado: {doc.processed_at.strftime('%d/%m/%Y %H:%M:%S')}")
+    except Exception as exc:
+        _error(f"Error al procesar: {exc}")
+        logger.exception("_cargar_archivo")
+    print()
 
 
-def demo_batch_processing(pipeline: IngestionPipeline, directory_path: str):
-    """
-    Demonstrate batch processing of multiple files.
-    
-    Args:
-        pipeline: IngestionPipeline instance
-        directory_path: Path to directory containing PDFs
-    """
-    print_separator("DEMO: BATCH PROCESSING DIRECTORY")
-    
-    dir_path = Path(directory_path)
-    
+def _cargar_carpeta(pipeline: IngestionPipeline, carpeta: str) -> None:
+    dir_path = Path(carpeta)
     if not dir_path.exists():
-        print(f"❌ Directory not found: {directory_path}")
-        print(f"   Creating directory: {directory_path}")
+        _aviso(f"Carpeta no encontrada. Creando: {carpeta}")
         dir_path.mkdir(parents=True, exist_ok=True)
-        print(f"   Please add PDF files to {directory_path} and run again.")
-        return None
-    
-    print(f"📁 Processing directory: {dir_path}")
-    print(f"   Recursive: True")
-    
+        print("  Agregá archivos PDF y volvé a intentarlo.\n")
+        return
+
+    print(f"\n  Procesando carpeta: {dir_path} …\n")
     try:
-        result = pipeline.process_directory(
-            directory_path=directory_path,
-            recursive=True,
-            continue_on_error=True
+        resultado = pipeline.process_directory(
+            directory_path=carpeta, recursive=True, continue_on_error=True
         )
-        
-        print(f"\n✅ Batch processing completed!")
-        print(f"   Total Files: {result.total_files}")
-        print(f"   Successful: {result.successful}")
-        print(f"   Failed: {result.failed}")
-        print(f"   Success Rate: {result.success_rate:.1f}%")
-        print(f"   Total Chunks: {result.total_chunks}")
-        
-        if result.successful > 0:
-            print(f"\n📊 Successful files:")
-            for file_path in result.get_successful_files():
-                print(f"   ✓ {Path(file_path).name}")
-        
-        if result.failed > 0:
-            print(f"\n⚠️  Failed files:")
-            for file_path in result.get_failed_files():
-                print(f"   ✗ {Path(file_path).name}")
-        
-        return result
-        
-    except Exception as e:
-        print(f"\n❌ Error in batch processing: {str(e)}")
-        logger.exception("Error in demo_batch_processing")
-        return None
+        _ok(f"Archivos encontrados : {resultado.total_files}")
+        _ok(f"Procesados con éxito : {resultado.successful}  ({resultado.success_rate:.0f} %)")
+        if resultado.failed:
+            _aviso(f"Con errores          : {resultado.failed}")
+        _ok(f"Total de fragmentos  : {resultado.total_chunks}")
+
+        if resultado.successful:
+            print("\n  Archivos procesados:")
+            for fp in resultado.get_successful_files():
+                print(f"    ✓  {Path(fp).name}")
+        if resultado.failed:
+            print("\n  Archivos con error:")
+            for fp in resultado.get_failed_files():
+                print(f"    ✗  {Path(fp).name}")
+    except Exception as exc:
+        _error(f"Error en la carga masiva: {exc}")
+        logger.exception("_cargar_carpeta")
+    print()
 
 
-def demo_search(retriever: DocumentRetriever, query: str, top_k: int = 5):
-    """
-    Demonstrate semantic search.
-    
-    Args:
-        retriever: DocumentRetriever instance
-        query: Search query
-        top_k: Number of results to return
-    """
-    print_separator("DEMO: SEMANTIC SEARCH")
-    
-    print(f"🔍 Query: '{query}'")
-    print(f"   Top K: {top_k}")
-    
+# ─────────────────────────────────────────────────────────────────────────────
+#  Búsqueda de documentos
+# ─────────────────────────────────────────────────────────────────────────────
+
+_MODOS = {
+    "1": ("estándar",  "Semántica estándar — rápida y precisa"),
+    "2": ("mmr",       "MMR — resultados variados sin duplicados"),
+    "3": ("expandida", "Expandida — mejor cobertura temática"),
+}
+
+
+def menu_busqueda(retriever: DocumentRetriever) -> None:
+    """Bucle interactivo de búsqueda con selección de modo."""
+    modo_actual = "expandida"
+
+    while True:
+        etiqueta_modo = next(v[1] for v in _MODOS.values() if v[0] == modo_actual)
+        _titulo("BÚSQUEDA EN DOCUMENTOS")
+        print(f"  Modo actual:  {etiqueta_modo}\n")
+        print("  Comandos disponibles:")
+        print("    modo      →  cambiar modo de búsqueda")
+        print("    salir     →  volver al menú principal\n")
+
+        consulta = _leer("  Consulta: ")
+
+        if not consulta:
+            continue
+        if consulta.lower() == "salir":
+            break
+        if consulta.lower() == "modo":
+            modo_actual = _seleccionar_modo(modo_actual)
+            continue
+
+        _ejecutar_busqueda(retriever, consulta, modo_actual)
+
+
+def _seleccionar_modo(modo_actual: str) -> str:
+    """Muestra un submenú para elegir el modo de búsqueda."""
+    print()
+    print("  Modos de búsqueda:")
+    for key, (modo, descripcion) in _MODOS.items():
+        marca = " ◀" if modo == modo_actual else ""
+        print(f"    {key}  {descripcion}{marca}")
+    print()
+    eleccion = _leer("  Elegí un modo (1/2/3): ")
+    if eleccion in _MODOS:
+        nuevo = _MODOS[eleccion][0]
+        _ok(f"Modo cambiado a: {_MODOS[eleccion][1]}\n")
+        return nuevo
+    _aviso("Opción no válida, se mantiene el modo actual.\n")
+    return modo_actual
+
+
+def _ejecutar_busqueda(retriever: DocumentRetriever, consulta: str, modo: str) -> None:
+    """Realiza la búsqueda y muestra los resultados."""
     try:
-        results = retriever.search(query=query, top_k=top_k)
-        
-        if not results:
-            print(f"\n❌ No results found.")
-            print(f"   Make sure documents have been processed first.")
-            return
-        
-        print(f"\n✅ Found {len(results)} results:\n")
-        
-        for idx, result in enumerate(results, 1):
-            print(f"📄 Result #{idx}")
-            print(f"   Score: {result.score:.4f}")
-            print(f"   Document: {result.document_name}")
-            print(f"   Chunk Index: {result.chunk.chunk_index}")
-            print(f"   Content Preview: {result.chunk.content[:200]}...")
-            print()
-        
-        return results
-        
-    except Exception as e:
-        print(f"\n❌ Error during search: {str(e)}")
-        logger.exception("Error in demo_search")
-        return None
+        if modo == "mmr":
+            resultados = retriever.search_mmr(query=consulta, top_k=5)
+        elif modo == "expandida":
+            resultados = retriever.search_expanded(query=consulta, top_k=5)
+        else:
+            resultados = retriever.search(query=consulta, top_k=5)
+    except RetrieverException as exc:
+        _error(str(exc))
+        return
+
+    print()
+    if not resultados:
+        _aviso("No se encontraron resultados. Verificá que haya documentos cargados.\n")
+        return
+
+    print(f"  Se encontraron {len(resultados)} resultado(s):\n")
+
+    for i, r in enumerate(resultados, 1):
+        doc = getattr(r, "document_name", None) or r.chunk.document_id
+        relevancia = int(r.score * 100)
+        print(f"  ┌─ Resultado {i}  {'─' * 30}")
+        print(f"  │  Documento  : {doc}")
+        print(f"  │  Relevancia : {relevancia}%  │  Fragmento #{r.chunk.chunk_index}")
+        print(f"  │")
+        # Texto a 56 caracteres por línea dentro del cuadro
+        texto = r.chunk.content.strip()[:400]
+        for linea in _partir_texto(texto, 54):
+            print(f"  │  {linea}")
+        print(f"  └{'─' * 47}")
+        print()
 
 
-def demo_get_context(retriever: DocumentRetriever, query: str, top_k: int = 3):
-    """
-    Demonstrate context extraction for RAG.
-    
-    Args:
-        retriever: DocumentRetriever instance
-        query: Search query
-        top_k: Number of chunks to include
-    """
-    print_separator("DEMO: RAG CONTEXT EXTRACTION")
-    
-    print(f"🔍 Query: '{query}'")
-    print(f"   Top K: {top_k}")
-    
-    try:
-        context = retriever.get_context(query=query, top_k=top_k)
-        
-        if not context:
-            print(f"\n❌ No context found.")
-            return
-        
-        print(f"\n✅ Context extracted ({len(context)} characters):\n")
-        print("="*80)
-        print(context)
-        print("="*80)
-        
-        return context
-        
-    except Exception as e:
-        print(f"\n❌ Error extracting context: {str(e)}")
-        logger.exception("Error in demo_get_context")
-        return None
+def _partir_texto(texto: str, ancho: int) -> list[str]:
+    """Divide un texto largo en líneas de ancho máximo `ancho`."""
+    palabras = texto.split()
+    lineas, actual = [], ""
+    for palabra in palabras:
+        if len(actual) + len(palabra) + 1 <= ancho:
+            actual = f"{actual} {palabra}".lstrip()
+        else:
+            if actual:
+                lineas.append(actual)
+            actual = palabra
+    if actual:
+        lineas.append(actual)
+    return lineas or [""]
 
 
-def show_vector_store_stats(vector_store: BaseVectorStore):
-    """
-    Display vector store statistics.
-    
-    Args:
-        vector_store: BaseVectorStore instance
-    """
-    print_separator("VECTOR STORE STATISTICS")
-    
-    total_chunks = vector_store.count()
-    
-    print(f"📊 Vector Store Stats:")
-    print(f"   Total Chunks: {total_chunks}")
-    print(f"   Dimension: {vector_store.dimension}")
-    
-    # Only show breakdown for stores that support get_all_chunks (e.g., InMemory)
-    if total_chunks > 0 and hasattr(vector_store, 'get_all_chunks'):
-        try:
-            all_chunks = vector_store.get_all_chunks()  # type: ignore
-        except Exception:
-            return
-        
-        # Get unique documents
-        unique_docs = set(chunk.document_id for chunk in all_chunks)
-        print(f"   Unique Documents: {len(unique_docs)}")
-        
-        # Show document breakdown
-        if len(unique_docs) <= 10:  # Only show if reasonable number
-            print(f"\n   Document Breakdown:")
-            for doc_id in sorted(unique_docs):
-                doc_chunks = [c for c in all_chunks if c.document_id == doc_id]
-                print(f"   - {doc_id}: {len(doc_chunks)} chunks")
+# ─────────────────────────────────────────────────────────────────────────────
+#  Chat con IA
+# ─────────────────────────────────────────────────────────────────────────────
+
+def menu_chat(retriever: DocumentRetriever) -> None:
+    """Conecta con Ollama y abre el chat interactivo."""
+    _titulo("CHAT CON IA")
+
+    rag_service = _conectar_ollama(retriever)
+    if rag_service is None:
+        _leer("\n  Presioná ENTER para volver al menú… ")
+        return
+
+    _chat_interactivo(rag_service)
 
 
-def setup_chat_service(
-    retriever: DocumentRetriever
-) -> Optional[RAGService]:
+def _seleccionar_o_descargar_modelo(
+    cliente: "OllamaClient", info: dict
+) -> Optional[str]:
+    """Permite elegir un modelo disponible o descargar uno nuevo.
+
+    Retorna el nombre del modelo elegido, o None si el usuario cancela.
     """
-    Initialize the chat service with Ollama.
-    
-    Args:
-        retriever: DocumentRetriever instance
-        
-    Returns:
-        RAGService instance or None if Ollama is not available
-    """
-    print_separator("SETTING UP CHAT SERVICE")
-    
-    print(f"🤖 Initializing Ollama client...")
-    print(f"   Model: {settings.OLLAMA_MODEL}")
-    print(f"   Base URL: {settings.OLLAMA_BASE_URL}")
-    
-    # 1. LLM Configuration
-    llm_config = LLMConfig(
-        model_name=settings.OLLAMA_MODEL,
-        temperature=settings.OLLAMA_TEMPERATURE,
-        max_tokens=settings.OLLAMA_MAX_TOKENS,
-        timeout=settings.OLLAMA_TIMEOUT
-    )
-    
-    # 2. Create Ollama client
-    ollama_client = OllamaClient(llm_config, base_url=settings.OLLAMA_BASE_URL)
-    
-    # 3. Check if Ollama is available
-    if not ollama_client.is_available():
-        print(f"\n⚠️  Ollama is not running at {settings.OLLAMA_BASE_URL}")
-        print(f"   To use the chat service:")
-        print(f"   1. Install Ollama from https://ollama.ai")
-        print(f"   2. Run: ollama serve")
-        print(f"   3. Pull a model: ollama pull {settings.OLLAMA_MODEL}")
-        print(f"\n   Skipping chat service setup...\n")
-        return None
-    
-    print(f"✓ Ollama is running!")
-    
-    # 4. Get model info
-    try:
-        model_info = ollama_client.get_model_info()
-        
-        if not model_info['available']:
-            print(f"\n⚠️  Model '{settings.OLLAMA_MODEL}' is not available")
-            print(f"   Available models: {', '.join(model_info['all_models'])}")
-            print(f"\n   To pull the model:")
-            print(f"   ollama pull {settings.OLLAMA_MODEL}")
-            print(f"\n   Skipping chat service setup...\n")
+    modelos: list = info.get("all_models") or []
+
+    while True:
+        print()
+        _linea()
+        print("  ¿Qué querés hacer?\n")
+
+        for i, m in enumerate(modelos, start=1):
+            print(f"    {i}.  Usar  '{m}'")
+
+        n = len(modelos)
+        print(f"    {n + 1}.  Descargar un modelo nuevo")
+        print(f"    0.  Cancelar\n")
+
+        opcion = _leer("  Opción: ").strip()
+
+        if opcion == "0":
             return None
-        
-        print(f"✓ Model '{settings.OLLAMA_MODEL}' is available")
-        
-    except Exception as e:
-        print(f"⚠️  Could not get model info: {e}")
-    
-    # 5. RAG Configuration
-    rag_config = RAGConfig(
+
+        if opcion == str(n + 1):
+            nombre = _leer(
+                "  Nombre del modelo (ej: llama3.2, mistral, phi3): "
+            ).strip()
+            if not nombre:
+                _aviso("Nombre vacío — operación cancelada.")
+                return None
+            print(f"\n  Descargando '{nombre}'… esto puede tardar varios minutos.")
+            print("  No cerrés la ventana.\n")
+            try:
+                cliente.pull_model(nombre)
+                _ok(f"Modelo '{nombre}' descargado correctamente.")
+                return nombre
+            except Exception as exc:
+                _error(f"No se pudo descargar '{nombre}': {exc}")
+                return None
+
+        try:
+            idx = int(opcion) - 1
+            if 0 <= idx < n:
+                return modelos[idx]
+        except ValueError:
+            pass
+
+        _aviso("Opción inválida, intentá de nuevo.")
+
+
+def _conectar_ollama(retriever: DocumentRetriever) -> Optional[RAGService]:
+    """Intenta conectarse a Ollama y construye el servicio RAG."""
+    print(f"  Conectando con Ollama…")
+    print(f"  URL    : {settings.OLLAMA_BASE_URL}\n")
+
+    modelo_activo = settings.OLLAMA_MODEL
+    cliente: Optional[OllamaClient] = None
+
+    # ── loop: permite cambiar de modelo sin salir del menú ───────────────────
+    while True:
+        llm_cfg = LLMConfig(
+            model_name=modelo_activo,
+            temperature=settings.OLLAMA_TEMPERATURE,
+            max_tokens=settings.OLLAMA_MAX_TOKENS,
+            timeout=settings.OLLAMA_TIMEOUT,
+        )
+        cliente = OllamaClient(llm_cfg, base_url=settings.OLLAMA_BASE_URL)
+
+        if not cliente.is_available():
+            _error(f"No se pudo conectar con Ollama en {settings.OLLAMA_BASE_URL}")
+            print(
+                "\n  Para iniciarlo:\n"
+                "    1. Instalá Ollama  →  https://ollama.ai\n"
+                "    2. Ejecutá: ollama serve\n"
+            )
+            return None
+
+        _ok("Ollama disponible")
+        print(f"  Modelo configurado : {modelo_activo}\n")
+
+        try:
+            info = cliente.get_model_info()
+        except Exception as exc:
+            _aviso(f"No se pudo verificar el modelo: {exc}")
+            info = {"available": True, "all_models": []}
+
+        if not info.get("available"):
+            disp = info.get("all_models") or []
+            _error(f"El modelo '{modelo_activo}' no está descargado.")
+            if disp:
+                print(f"  Modelos disponibles: {', '.join(disp)}\n")
+            else:
+                print()
+
+            modelo_nuevo = _seleccionar_o_descargar_modelo(cliente, info)
+            if modelo_nuevo is None:
+                return None
+            modelo_activo = modelo_nuevo
+            print()
+            continue  # volver a verificar con el nuevo modelo
+
+        _ok(f"Modelo '{modelo_activo}' listo")
+        break  # todo OK, seguir
+
+    rag_cfg = RAGConfig(
         top_k=settings.RAG_TOP_K,
         min_relevance=settings.RAG_MIN_RELEVANCE,
         max_context_length=settings.RAG_MAX_CONTEXT_LENGTH,
         include_sources=settings.RAG_INCLUDE_SOURCES,
         strict_mode=settings.RAG_STRICT_MODE,
-        system_prompt=settings.RAG_SYSTEM_PROMPT
+        system_prompt=settings.RAG_SYSTEM_PROMPT,
     )
-    
-    # 6. Security configuration
-    security_config = SecurityConfig(
-        enabled=settings.RAG_ENABLE_SECURITY
-    )
-    
-    # 7. Create RAG service
-    rag_service = RAGService(
+    servicio = RAGService(
         retriever=retriever,
-        llm_client=ollama_client,
-        config=rag_config,
-        security_config=security_config
+        llm_client=cliente,
+        config=rag_cfg,
+        security_config=SecurityConfig(enabled=settings.RAG_ENABLE_SECURITY),
     )
-    
-    print(f"✓ RAG Service initialized")
-    print(f"\n✅ Chat service ready!")
-    
-    # 7. Pre-warm the model with a simple query
-    print(f"\n🔥 Pre-warming model (primera consulta puede tardar)...")
+
+    print("\n  Preparando modelo…")
     try:
-        warmup_messages = [
-            Message(MessageRole.USER, "Hi")
-        ]
-        ollama_client.generate(warmup_messages, max_tokens=10)
-        print(f"✓ Model is ready!\n")
-    except Exception as e:
-        print(f"⚠️  Model warmup warning: {e}")
-        print(f"   Continuing anyway...\n")
-    
-    return rag_service
+        cliente.generate([Message(MessageRole.USER, "Hola")], max_tokens=5)
+        _ok("Modelo calentado y listo\n")
+    except Exception as exc:
+        _aviso(f"No se pudo pre-calentar: {exc}\n")
+
+    return servicio
 
 
-def demo_chat(rag_service: RAGService, query: str):
-    """
-    Demonstrate a single chat interaction.
-    
-    Args:
-        rag_service: RAGService instance
-        query: User query
-    """
-    print_separator("DEMO: RAG CHAT")
-    
-    print(f"👤 User: {query}")
-    print(f"\n🤔 Processing...")
-    
-    try:
-        response = rag_service.chat(query)
-        
-        print(f"\n🤖 Assistant: {response.content}")
-        
-        if response.sources:
-            print(f"\n📚 Sources ({len(response.sources)}):")
-            for idx, source in enumerate(response.sources, 1):
-                print(f"   [{idx}] Document: {source.document_id}")
-                print(f"       Relevance: {source.relevance_score:.2f}")
-                print(f"       Content: {source.content[:100]}...")
-                print()
-        
-        print(f"ℹ️  Metadata:")
-        print(f"   Model: {response.metadata.get('model')}")
-        print(f"   Sources used: {response.metadata.get('num_sources')}")
-        print(f"   Has context: {response.metadata.get('has_context')}")
-        
-        return response
-        
-    except LLMConnectionError as e:
-        print(f"\n❌ Connection Error: {str(e)}")
-        print(f"   Make sure Ollama is running.")
-        return None
-    except Exception as e:
-        print(f"\n❌ Error: {str(e)}")
-        logger.exception("Error in demo_chat")
-        return None
+def _chat_interactivo(rag_service: RAGService) -> None:
+    """Bucle de conversación con la IA."""
+    _titulo("CHAT ACTIVO")
+    print("  Hacé tus preguntas sobre los documentos cargados.")
+    print("  Comandos:")
+    print("    borrar     →  limpiar el historial de conversación")
+    print("    historial  →  ver mensajes anteriores")
+    print("    salir      →  volver al menú principal\n")
 
-
-def interactive_chat(rag_service: RAGService):
-    """
-    Interactive chat session with the RAG service.
-    
-    Args:
-        rag_service: RAGService instance
-    """
-    print_separator("INTERACTIVE CHAT")
-    
-    print("💬 Chat with your documents!")
-    print("   Commands:")
-    print("   - Type your question to chat")
-    print("   - 'clear' to clear conversation history")
-    print("   - 'history' to see conversation history")
-    print("   - 'quit' or 'exit' to exit")
-    print()
-    
     while True:
-        try:
-            query = input("👤 You: ").strip()
-            
-            if query.lower() in ['quit', 'exit', 'q']:
-                print("\n👋 Goodbye!")
-                break
-            
-            if not query:
-                continue
-            
-            if query.lower() == 'clear':
-                rag_service.clear_conversation()
-                print("🗑️  Conversation history cleared.\n")
-                continue
-            
-            if query.lower() == 'history':
-                history = rag_service.get_conversation_history()
-                messages = history.get_messages(include_system=False)
-                
-                if not messages:
-                    print("📭 No conversation history yet.\n")
-                else:
-                    print(f"\n📜 Conversation History ({len(messages)} messages):\n")
-                    for msg in messages:
-                        role_icon = "👤" if msg.role.value == "user" else "🤖"
-                        print(f"{role_icon} {msg.role.value.capitalize()}: {msg.content[:100]}...")
-                    print()
-                continue
-            
-            # Chat
-            print("\n🤔 Thinking...")
-            response = rag_service.chat(query)
-            
-            print(f"\n🤖 Assistant: {response.content}\n")
-            
-            if response.sources:
-                print(f"📚 [{len(response.sources)} sources used]\n")
-                
-        except KeyboardInterrupt:
-            print("\n\n👋 Goodbye!")
+        pregunta = _leer("  Vos  : ")
+
+        if not pregunta:
+            continue
+
+        if pregunta.lower() == "salir":
+            print()
             break
-        except LLMConnectionError as e:
-            print(f"\n❌ Connection Error: {str(e)}")
-            print(f"   Ollama may have stopped. Please restart it.\n")
-        except Exception as e:
-            print(f"\n❌ Error: {str(e)}\n")
 
+        if pregunta.lower() == "borrar":
+            rag_service.clear_conversation()
+            _ok("Historial borrado.\n")
+            continue
 
-def main():
-    """
-    Main demo function - orchestrates all demos.
-    """
-    print("\n")
-    print("="*80)
-    print(" "*20 + "CHATBOT RAG SYSTEM - DEMO")
-    print("="*80)
-    print("\nThis demo showcases the complete RAG pipeline:")
-    print("  1. Document processing (PDF → Chunks → Embeddings → Storage)")
-    print("  2. Batch ingestion (multiple files)")
-    print("  3. Semantic search (query → relevant chunks)")
-    print("  4. Context extraction (for RAG)")
-    print("  5. RAG Chat with Ollama (conversational AI)")
-    print()
-    
-    # Setup components
-    processor, retriever, pipeline, vector_store = setup_components()
-    
-    # Configuration
-    DATA_DIR = Path(settings.DATA_DIR)
-    SAMPLE_PDF = DATA_DIR / "sample.pdf"
-    
-    # Demo 1: Process single file
-    print("\n")
-    input("Press ENTER to start Demo 1: Process Single File...")
-    
-    document = demo_process_single_file(processor, str(SAMPLE_PDF))
-    
-    # Demo 2: Batch processing
-    print("\n")
-    input("Press ENTER to start Demo 2: Batch Processing...")
-    
-    batch_result = demo_batch_processing(pipeline, str(DATA_DIR))
-    
-    # Show vector store stats
-    print("\n")
-    input("Press ENTER to view Vector Store Statistics...")
-    
-    show_vector_store_stats(vector_store)
-    
-    # Demo 3: Semantic search
-    print("\n")
-    input("Press ENTER to start Demo 3: Semantic Search...")
-    
-    demo_search(
-        retriever,
-        query="What is the main topic of the document?",
-        top_k=5
-    )
-    
-    # Demo 4: Context extraction
-    print("\n")
-    input("Press ENTER to start Demo 4: RAG Context Extraction...")
-    
-    demo_get_context(
-        retriever,
-        query="Explain the key concepts",
-        top_k=3
-    )
-    
-    # Demo 5: Setup chat service
-    print("\n")
-    response = input("Press ENTER to setup Chat Service (or 'skip' to skip chat demos)...")
-    
-    rag_service = None
-    if response.lower() != 'skip':
-        rag_service = setup_chat_service(
-            retriever=retriever
-        )
-    
-    if rag_service:
-        # Demo 6: Single chat interaction
-        print("\n")
-        input("Press ENTER to start Demo 5: RAG Chat...")
-        
-        demo_chat(
-            rag_service,
-            query="¿Cuál es el tema principal del documento?"
-        )
-        
-        # Demo 7: Interactive chat
-        print("\n")
-        response = input("Press ENTER to start Interactive Chat (or 'skip' to skip)...")
-        
-        if response.lower() != 'skip':
-            interactive_chat(rag_service)
-    else:
-        print("\n⚠️  Chat service not available. Skipping chat demos.\n")
-    
-    # Interactive search (non-chat)
-    if not rag_service or response.lower() == 'skip':
-        print_separator("INTERACTIVE SEARCH")
-        print("You can now query the documents interactively.")
-        print("Type your questions (or 'quit' to exit):\n")
-        
-        while True:
-            try:
-                query = input("🔍 Query: ").strip()
-                
-                if query.lower() in ['quit', 'exit', 'q']:
-                    print("\n👋 Goodbye!")
-                    break
-                
-                if not query:
-                    continue
-                
+        if pregunta.lower() == "historial":
+            mensajes = rag_service.get_conversation_history().get_messages(include_system=False)
+            if not mensajes:
+                print("  (el historial está vacío)\n")
+            else:
                 print()
-                results = retriever.search(query=query, top_k=3)
-                
-                if results:
-                    print(f"Found {len(results)} results:\n")
-                    for idx, result in enumerate(results, 1):
-                        print(f"{idx}. [Score: {result.score:.3f}] {result.chunk.content[:150]}...")
-                    print()
-                else:
-                    print("No results found.\n")
-                    
-            except KeyboardInterrupt:
-                print("\n\n👋 Goodbye!")
-                break
-            except Exception as e:
-                print(f"\n❌ Error: {str(e)}\n")
-    
-    print_separator("DEMO COMPLETED")
-    print("Thank you for trying the ChatBot RAG System!")
+                for m in mensajes:
+                    quien = "Vos" if m.role.value == "user" else " IA"
+                    print(f"  {quien}  :  {m.content[:120]}")
+                print()
+            continue
+
+        try:
+            print("  IA   : …\n")
+            respuesta = rag_service.chat(pregunta)
+            # Mostrar la respuesta en líneas cortas
+            for linea in _partir_texto(respuesta.content, W - 10):
+                print(f"  IA   :  {linea}")
+            print()
+            if respuesta.sources:
+                print(f"  [ {len(respuesta.sources)} fuente(s) utilizada(s) ]")
+                for i, src in enumerate(respuesta.sources, 1):
+                    print(f"    {i}. {src.document_id}  —  relevancia {src.relevance_score:.0%}")
+            print()
+        except LLMConnectionError as exc:
+            _error(f"Conexión perdida: {exc}\n")
+        except Exception as exc:
+            _error(f"{exc}\n")
+            logger.exception("_chat_interactivo")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Estadísticas
+# ─────────────────────────────────────────────────────────────────────────────
+
+def mostrar_estadisticas(vector_store: BaseVectorStore) -> None:
+    """Muestra información sobre el contenido del vector store."""
+    _titulo("ESTADÍSTICAS DEL SISTEMA")
+
+    total = vector_store.count()
+    print(f"  Fragmentos almacenados : {total}")
+    print(f"  Dimensión de vectores  : {vector_store.dimension}")
+
+    if total > 0 and hasattr(vector_store, "get_all_chunks"):
+        try:
+            fragmentos = vector_store.get_all_chunks()  # type: ignore[attr-defined]
+            docs_unicos = {c.document_id for c in fragmentos}
+            print(f"  Documentos distintos   : {len(docs_unicos)}\n")
+            if docs_unicos:
+                print("  Detalle por documento:")
+                for did in sorted(docs_unicos):
+                    n = sum(1 for c in fragmentos if c.document_id == did)
+                    print(f"    • {did}  →  {n} fragmento(s)")
+        except Exception:
+            pass
+
+    print()
+    _leer("  Presioná ENTER para continuar… ")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Menú principal
+# ─────────────────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    # Cabecera
+    print()
+    print("  ╔" + "═" * (W - 2) + "╗")
+    print("  ║" + "CHATBOT RAG".center(W - 2) + "║")
+    print("  ║" + "Sistema de preguntas sobre documentos".center(W - 2) + "║")
+    print("  ╚" + "═" * (W - 2) + "╝")
     print()
 
+    # Inicialización (siempre al arrancar)
+    processor, retriever, pipeline, vector_store = inicializar()
+
+    # Bucle del menú principal
+    while True:
+        docs_cargados = vector_store.count()
+        estado = f"{docs_cargados} fragmento(s) en memoria" if docs_cargados else "sin documentos cargados"
+
+        print(f"  ┌{'─' * (W - 2)}┐")
+        print(f"  │{'MENÚ PRINCIPAL'.center(W - 2)}│")
+        print(f"  │  Estado: {estado:<{W - 12}}│")
+        print(f"  ├{'─' * (W - 2)}┤")
+        print(f"  │  1  Cargar documentos                              │")
+        print(f"  │  2  Buscar en documentos                           │")
+        print(f"  │  3  Chat con IA  (requiere Ollama)                 │")
+        print(f"  │  4  Ver estadísticas                               │")
+        print(f"  │  0  Salir                                          │")
+        print(f"  └{'─' * (W - 2)}┘")
+
+        opcion = _leer("\n  Opción: ")
+
+        if opcion == "1":
+            menu_ingesta(processor, pipeline)
+        elif opcion == "2":
+            if docs_cargados == 0:
+                print()
+                _aviso("No hay documentos cargados. Cargá algunos primero (opción 1).\n")
+            else:
+                menu_busqueda(retriever)
+        elif opcion == "3":
+            if docs_cargados == 0:
+                print()
+                _aviso("No hay documentos cargados. Cargá algunos primero (opción 1).\n")
+            else:
+                menu_chat(retriever)
+        elif opcion == "4":
+            mostrar_estadisticas(vector_store)
+        elif opcion == "0":
+            print("\n  ¡Hasta luego!\n")
+            break
+        else:
+            print()
+            _aviso("Opción no válida. Ingresá 0, 1, 2, 3 o 4.\n")
 
 
 if __name__ == "__main__":
     main()
+
+

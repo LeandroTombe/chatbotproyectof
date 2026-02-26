@@ -264,9 +264,9 @@ class TestDocumentRetrieverGetContext:
             vector_store=vector_store
         )
         
-        context = retriever.get_context("test query")
+        # Use mode='standard' to get predictable single-call behavior
+        context = retriever.get_context("test query", mode="standard", include_sources=False)
         
-        # Default separator is "\n\n---\n\n"
         expected = "First chunk content\n\n---\n\nSecond chunk content"
         assert context == expected
     
@@ -304,7 +304,7 @@ class TestDocumentRetrieverGetContext:
             vector_store=vector_store
         )
         
-        context = retriever.get_context("test query", separator=" | ")
+        context = retriever.get_context("test query", separator=" | ", mode="standard", include_sources=False)
         
         assert context == "Content A | Content B"
     
@@ -350,9 +350,9 @@ class TestDocumentRetrieverGetContext:
             vector_store=vector_store
         )
         
-        context = retriever.get_context("test", top_k=1)
+        context = retriever.get_context("test", top_k=1, mode="standard", include_sources=False)
         
-        # Verify top_k passed to search
+        # Standard mode calls search exactly once
         vector_store.search.assert_called_once()
         call_kwargs = vector_store.search.call_args[1]
         assert call_kwargs['top_k'] == 1
@@ -391,7 +391,7 @@ class TestDocumentRetrieverErrors:
             vector_store=vector_store
         )
         
-        with pytest.raises(RetrieverException, match="Error searching for query"):
+        with pytest.raises(RetrieverException, match=r"search\(\) failed for query"):
             retriever.search("test query")
     
     def test_search_generic_error(self):
@@ -407,7 +407,7 @@ class TestDocumentRetrieverErrors:
             vector_store=vector_store
         )
         
-        with pytest.raises(RetrieverException, match="Error searching for query"):
+        with pytest.raises(RetrieverException, match=r"search\(\) failed for query"):
             retriever.search("test query")
     
     def test_get_context_raises_retriever_exception(self):
