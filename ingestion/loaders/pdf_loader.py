@@ -103,6 +103,10 @@ class PDFLoader(BaseLoader):
             raise LoaderException(error_msg) from e
 
     def _generate_document_id(self, path: Path) -> str:
-        unique_string = f"{path.absolute()}_{path.name}"
-        doc_id = hashlib.md5(unique_string.encode()).hexdigest()
-        return f"doc_{doc_id[:16]}"
+        """Genera el ID del documento usando SHA-256 del contenido.
+        
+        El hash de contenido es estable independientemente de la ruta
+        (funciona igual en local y en Docker).
+        """
+        content_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+        return f"doc_{content_hash[:16]}"

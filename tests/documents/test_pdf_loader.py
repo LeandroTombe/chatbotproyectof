@@ -183,30 +183,42 @@ class TestPDFLoaderGenerateDocumentId:
     def test_generate_document_id(self):
         """Prueba generación de ID único"""
         loader = PDFLoader()
-        path = Path("test.pdf")
-        
-        doc_id = loader._generate_document_id(path)
-        
-        assert doc_id.startswith("doc_")
-        assert len(doc_id) == 20  # "doc_" + 16 hex chars
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+            tmp.write(b"some pdf content")
+            tmp_path = tmp.name
+        try:
+            doc_id = loader._generate_document_id(Path(tmp_path))
+            assert doc_id.startswith("doc_")
+            assert len(doc_id) == 20  # "doc_" + 16 hex chars
+        finally:
+            os.unlink(tmp_path)
     
     def test_generate_document_id_consistent(self):
-        """Prueba que el mismo path genera el mismo ID"""
+        """Prueba que el mismo archivo genera el mismo ID"""
         loader = PDFLoader()
-        path = Path("test.pdf")
-        
-        id1 = loader._generate_document_id(path)
-        id2 = loader._generate_document_id(path)
-        
-        assert id1 == id2
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+            tmp.write(b"consistent content")
+            tmp_path = tmp.name
+        try:
+            id1 = loader._generate_document_id(Path(tmp_path))
+            id2 = loader._generate_document_id(Path(tmp_path))
+            assert id1 == id2
+        finally:
+            os.unlink(tmp_path)
     
     def test_generate_document_id_different_paths(self):
-        """Prueba que diferentes paths generan IDs diferentes"""
+        """Prueba que archivos con diferente contenido generan IDs diferentes"""
         loader = PDFLoader()
-        path1 = Path("test1.pdf")
-        path2 = Path("test2.pdf")
-        
-        id1 = loader._generate_document_id(path1)
-        id2 = loader._generate_document_id(path2)
-        
-        assert id1 != id2
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp1:
+            tmp1.write(b"content of file one")
+            tmp_path1 = tmp1.name
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp2:
+            tmp2.write(b"content of file two")
+            tmp_path2 = tmp2.name
+        try:
+            id1 = loader._generate_document_id(Path(tmp_path1))
+            id2 = loader._generate_document_id(Path(tmp_path2))
+            assert id1 != id2
+        finally:
+            os.unlink(tmp_path1)
+            os.unlink(tmp_path2)

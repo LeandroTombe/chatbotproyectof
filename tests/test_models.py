@@ -11,7 +11,7 @@ from typing import List, Optional, Dict, Any
 
 from domain.models import (
     Document, ProcessingStatus, ChunkingConfig, Chunk,
-    SearchResult, RetrievalConfig, Query
+    SearchResult, RetrievalConfig
 )
 
 
@@ -166,28 +166,3 @@ class TestRetrievalConfig:
         with pytest.raises(ValueError, match="min_score debe estar entre 0 y 1"):
             config.validate()
 
-
-class TestQuery:
-    """Tests para Query"""
-    
-    def test_filter_by_score(self):
-        """Prueba filtrado por score mínimo"""
-        chunk1 = Chunk("c1", "doc1", "texto1", 0)
-        chunk2 = Chunk("c2", "doc1", "texto2", 1)
-        chunk3 = Chunk("c3", "doc1", "texto3", 2)
-        
-        query = Query(
-            id="q1",
-            text="consulta de prueba",
-            results=[
-                SearchResult(chunk1, 0.9, "doc1.pdf"),
-                SearchResult(chunk2, 0.6, "doc1.pdf"),
-                SearchResult(chunk3, 0.8, "doc1.pdf")
-            ]
-        )
-        
-        filtered = query.filter_by_score(min_score=0.7)
-        
-        assert len(filtered) == 2
-        assert filtered[0].score == 0.9
-        assert filtered[1].score == 0.8

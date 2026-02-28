@@ -21,7 +21,11 @@
 
 ## 📋 Tabla de Contenidos
 
-- [Descripción](#-descripción)
+- [Descripción Ejecutiva](#-descripción-ejecutiva)
+- [Descripción Técnica](#-descripción-técnica)
+- [Cómo Funciona en Simple](#-cómo-funciona-en-simple)
+- [Qué Problema Resuelve](#-qué-problema-resuelve)
+- [Por Qué Es una Solución Profesional](#-por-qué-es-una-solución-profesional-y-segura)
 - [Características](#-características)
 - [Cómo Funciona](#-cómo-funciona)
 - [Arquitectura](#-arquitectura)
@@ -39,17 +43,87 @@
 
 ---
 
-## 📖 Descripción
+## � Descripción Ejecutiva
 
-**ChatBot RAG** es un sistema de chat inteligente que utiliza **RAG (Retrieval-Augmented Generation)** para responder preguntas basándose **exclusivamente** en documentos PDF proporcionados. A diferencia de chatbots tradicionales que usan su conocimiento preentrenado, este sistema:
+**ChatBot RAG** es un asistente de inteligencia artificial que responde preguntas usando **únicamente la información de los documentos internos de la organización**. A diferencia de herramientas como ChatGPT, no tiene acceso a internet ni inventa respuestas: todo lo que dice proviene textualmente de los archivos que se le proporcionan, citando siempre la fuente exacta. Funciona de forma completamente privada dentro de la red corporativa, sin enviar ningún dato al exterior. Es configurable, escalable y está construido con estándares de ingeniería de software profesional, garantizando mantenibilidad a largo plazo. Puede desplegarse en cualquier servidor interno o nube privada, y su arquitectura modular permite incorporar nuevos tipos de documentos o modelos de IA sin reescribir el sistema.
 
 ✅ **Solo responde con información de tus documentos**  
 ✅ **Cita las fuentes** de cada respuesta  
 ✅ **Detecta preguntas maliciosas** con filtros de seguridad  
+✅ **Funciona 100% offline** — sin dependencias externas  
 ✅ **Mantiene contexto** de la conversación  
-✅ **Funciona offline** con modelos locales (Ollama)
+✅ **Se actualiza automáticamente** al agregar nuevos PDFs
 
-**Caso de uso ideal**: Atención al cliente, documentación interna, base de conocimientos empresarial, asistentes educativos, etc.
+**Casos de uso ideales**: Atención al cliente, documentación interna, base de conocimientos empresarial, asistentes educativos, soporte técnico automatizado.
+
+---
+
+## 🛠️ Descripción Técnica
+
+El sistema implementa una arquitectura **RAG (Retrieval-Augmented Generation)** con separación estricta de responsabilidades:
+
+**Pipeline de ingesta (ETL):**
+- Carga PDFs mediante loaders intercambiables (`Factory Pattern`)
+- Divide el texto en fragmentos con overlap configurable (`TextChunker`)
+- Genera embeddings semánticos con `intfloat/multilingual-e5` vía HuggingFace
+- Persiste vectores en **ChromaDB** con detección de duplicados por hash determinístico
+- Vigila carpetas automáticamente con `watchdog` para ingesta en tiempo real
+- Al arrancar, indexa solo los documentos nuevos — salta los ya procesados
+
+**Pipeline de consulta:**
+- Búsqueda por similitud coseno con soporte a **MMR** (máxima marginal relevancia) y búsqueda expandida
+- Filtro de relevancia configurable (`min_score`)
+- Validación de seguridad en doble capa: 44+ palabras clave + 7 patrones regex contra prompt injection
+
+**Capa LLM:**
+- Cliente Ollama con interfaz abstracta (`Strategy Pattern`) — soporta `llama3.2`, `mistral`, `phi`, `codellama`
+- Modo estricto: el modelo **no puede responder fuera del contexto recuperado**
+- Historial de conversación con ventana de contexto gestionada
+
+**Calidad de código:**
+- `BaseSettings` Pydantic para configuración tipada vía `.env`
+- 290+ tests con pytest (unitarios + integración)
+- Type hints completos, validados con mypy
+- Containerización completa con Docker Compose
+
+---
+
+## 💡 Cómo Funciona en Simple
+
+Imaginá que tenés un empleado nuevo muy inteligente. El primer día le das a leer todos los manuales, reglamentos y documentos de la empresa. Él los lee, los memoriza y los organiza internamente de una forma que le permite encontrar información en segundos.
+
+Cuando alguien le hace una pregunta, **no inventa nada**: busca en su memoria qué parte de qué documento responde mejor esa pregunta y te da la respuesta citando exactamente de dónde la sacó. Si no sabe algo porque no está en ningún documento, lo dice directamente.
+
+Además, este empleado **nunca sale de la oficina**: toda su memoria y todo su conocimiento está guardado dentro de la empresa, sin depender de internet ni de servidores externos. Y si alguien intenta confundirlo con preguntas maliciosas o engañosas, tiene entrenamiento para detectarlas y no responderlas.
+
+---
+
+## 🎯 Qué Problema Resuelve
+
+Las empresas acumulan enormes volúmenes de documentación interna (manuales, políticas, contratos, FAQs, reglamentos) que el personal no puede consultar fácilmente. Buscar información relevante toma tiempo, genera errores y depende de que la persona correcta esté disponible.
+
+| Chatbot común | Este sistema |
+|---|---|
+| Responde con conocimiento general de internet | Responde **solo** con los documentos de la empresa |
+| Puede inventar información (*alucinaciones*) | Solo habla si la información está en los documentos |
+| Envía datos a servidores externos | Funciona **completamente offline** en red interna |
+| No cita fuentes | Indica exactamente de qué documento viene cada respuesta |
+| Sin control de seguridad específico | Detecta y bloquea intentos de manipulación |
+| Base de conocimiento fija | Se actualiza automáticamente al agregar nuevos PDFs |
+
+---
+
+## 🔐 Por Qué Es una Solución Profesional y Segura
+
+**Privacidad garantizada:** El sistema corre 100% dentro de la infraestructura propia. Ningún dato, pregunta ni documento sale de la red corporativa. Es apto para entornos con restricciones de confidencialidad o cumplimiento normativo (GDPR, ISO 27001, etc.).
+
+**Confiabilidad de las respuestas:** El modo estricto impide que el modelo genere contenido fuera de los documentos cargados. Cada respuesta viene acompañada de su fuente, lo que permite auditar y verificar la información en segundos.
+
+**Seguridad activa:** El sistema incluye un validador con doble capa de protección contra intentos de manipulación (*prompt injection*), un riesgo real en sistemas de IA expuestos a usuarios finales.
+
+**Mantenibilidad a largo plazo:** La arquitectura modular basada en principios SOLID significa que agregar un nuevo tipo de documento, cambiar el modelo de IA o migrar la base de datos vectorial son tareas de horas, no de semanas. Los 290+ tests automatizados garantizan que cada cambio no rompe el comportamiento existente.
+
+**Autonomía tecnológica:** Al usar modelos de código abierto (Ollama + HuggingFace), la empresa no depende de ningún proveedor externo, no paga por consulta y puede cambiar de modelo cuando aparezca una mejor alternativa, sin tocar el resto del sistema.
 
 ---
 
@@ -384,13 +458,19 @@ VECTOR_STORE_TYPE=chroma
 
 #### 6. Preparar Documentos
 
-```bash
-# Crear directorio de documentos si no existe
-mkdir -p documents
+La carpeta `data/pdfs/` ya existe en el proyecto. Simplemente copiá tus PDFs ahí:
 
-# Copiar tus PDFs a ./documents/
-cp /ruta/a/tus/pdfs/*.pdf documents/
+```bash
+# Copiar tus PDFs a data/pdfs/
+cp /ruta/a/tus/pdfs/*.pdf data/pdfs/
 ```
+
+```powershell
+# Windows
+Copy-Item "C:\ruta\a\tus\pdfs\*.pdf" "data\pdfs\"
+```
+
+> Al iniciar la aplicación, los documentos se indexan automáticamente. No hace falta ningún paso adicional.
 
 #### 7. ¡Listo para Usar!
 

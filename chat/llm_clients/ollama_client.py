@@ -1,6 +1,7 @@
 """Ollama LLM client implementation."""
+import json
 import requests
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 from chat.llm_clients.base import BaseLLMClient, LLMConfig, LLMConnectionError, LLMResponseError
 from chat.models import Message
 
@@ -118,7 +119,7 @@ class OllamaClient(BaseLLMClient):
         try:
             response = requests.get(self.tags_endpoint, timeout=5)
             return response.status_code == 200
-        except:
+        except (requests.exceptions.RequestException, OSError):
             return False
     
     def get_model_info(self) -> Dict[str, Any]:
@@ -147,6 +148,13 @@ class OllamaClient(BaseLLMClient):
                 "model_name": self.config.model_name,
                 "available": current_model is not None,
                 "all_models": [m.get("name") for m in models],
+                "all_models_detail": [
+                    {
+                        "name": m.get("name", ""),
+                        "size": m.get("size", 0),
+                    }
+                    for m in models
+                ],
                 "model_details": current_model,
                 "base_url": self.base_url
             }
@@ -171,31 +179,63 @@ class OllamaClient(BaseLLMClient):
         info = self.get_model_info()
         return info.get("all_models", [])
     
-    def pull_model(self, model_name: Optional[str] = None) -> bool:
+    def pull_model(
+        self,
+        model_name: Optional[str] = None,
+        on_progress: Optional[Callable[[str, int, int], None]] = None,
+    ) -> bool:
         """Pull/download a model from Ollama library.
-        
+
+        Streams the download so callers receive live progress via ``on_progress``.
+
         Args:
-            model_name: Name of model to pull (defaults to configured model)
-            
+            model_name:   Name of model to pull (defaults to configured model)
+            on_progress:  Optional callback(status, completed_bytes, total_bytes)
+                          called on every progress event from the API.
+
         Returns:
             True if successful
-            
+
         Raises:
             LLMConnectionError: If cannot connect to Ollama
-            LLMResponseError: If pull fails
+            LLMResponseError:   If pull fails
         """
         model = model_name or self.config.model_name
         pull_endpoint = f"{self.base_url}/api/pull"
-        
+
         try:
-            response = requests.post(
+            success_received = False
+            # stream=True so we get progress events as NDJSON lines
+            # timeout=(connect_timeout, read_timeout)
+            # 30 s to connect; 7 200 s (2 h) read — large models can be several GB
+            with requests.post(
                 pull_endpoint,
-                json={"name": model, "stream": False},
-                timeout=300  # 5 minutes for model download
-            )
-            response.raise_for_status()
-            return True
-            
+                json={"name": model, "stream": True},
+                stream=True,
+                timeout=(30, 7200),
+            ) as response:
+                response.raise_for_status()
+
+                for raw_line in response.iter_lines():
+                    if not raw_line:
+                        continue
+                    try:
+                        event = json.loads(raw_line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    status    = event.get("status", "")
+                    completed = int(event.get("completed", 0) or 0)
+                    total     = int(event.get("total", 0) or 0)
+
+                    if on_progress:
+                        on_progress(status, completed, total)
+
+                    if status == "success":
+                        success_received = True
+
+            return success_received
+
         except requests.exceptions.ConnectionError as e:
             raise LLMConnectionError(
                 f"Failed to connect to Ollama at {self.base_url}. Error: {e}"

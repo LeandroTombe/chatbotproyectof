@@ -38,8 +38,7 @@ class SecurityConfig:
         'contraseña',
         'password',
         'api key',
-        'token',
-        'secret',
+        'api secret',
         'configuración del sistema',
         'config del sistema',
         'variables de entorno',
@@ -47,18 +46,14 @@ class SecurityConfig:
         
         # Información de infraestructura
         'servidor',
-        'server',
         'ip address',
         'dirección ip',
-        'puerto',
-        'port',
         'modelo de ia',
         'modelo estás usando',
         'qué modelo',
         'versión del modelo',
         'arquitectura del sistema',
         'información de la infraestructura',
-        'infraestructura',
         
         # Prompt injection attempts
         'system prompt',
@@ -75,8 +70,6 @@ class SecurityConfig:
         'información confidencial',
         'credenciales',
         'credentials',
-        'llm',
-        'embedding',
         'vector store',
         'ollama config',
     ])
@@ -131,9 +124,11 @@ class QueryValidator:
             if re.search(pattern, query_lower, re.IGNORECASE):
                 return False, self.config.rejection_message
         
-        # Check blocked keywords
+        # Check blocked keywords (word-boundary match to avoid false positives
+        # e.g. 'port' must not match 'reporte', 'token' must not match 'tokenización')
         for keyword in self.config.blocked_keywords:
-            if keyword.lower() in query_lower:
+            pattern = r'\b' + re.escape(keyword.lower()) + r'\b'
+            if re.search(pattern, query_lower):
                 return False, self.config.rejection_message
         
         # Additional heuristics

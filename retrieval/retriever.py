@@ -15,28 +15,18 @@ Provides three complementary search strategies:
 from __future__ import annotations
 
 import logging
-import math
 import re
-from typing import List, Optional, Dict, Any, Sequence
+from typing import List, Optional, Dict, Any
 
 from domain.models import SearchResult
 from embeddings.base import BaseEmbedding
-from vectorstore.base import BaseVectorStore
+from vectorstore.base import BaseVectorStore, cosine_similarity
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _cosine(v1: Sequence[float], v2: Sequence[float]) -> float:
-    """Pure-Python cosine similarity (avoids numpy dependency)."""
-    dot = sum(a * b for a, b in zip(v1, v2))
-    n1 = math.sqrt(sum(a * a for a in v1))
-    n2 = math.sqrt(sum(b * b for b in v2))
-    if n1 == 0 or n2 == 0:
-        return 0.0
-    return dot / (n1 * n2)
 
 
 def _keyword_score(text: str, query_terms: List[str]) -> float:
@@ -60,8 +50,12 @@ def _expand_query(query: str) -> List[str]:
     variants: List[str] = [query]
 
     # Strip leading question words to create a declarative variant
+    # English and Spanish question words
     declarative = re.sub(
-        r"^\s*(what|who|where|when|why|how|which|describe|explain)\s+(is|are|was|were|do|does|did|can|could|should|would)?\s*",
+        r"^\s*(what|who|where|when|why|how|which|describe|explain"
+        r"|¿qué|qué|¿cuál|cuál|¿cuáles|cuáles|¿dónde|dónde|¿cuándo|cuándo"
+        r"|¿cómo|cómo|¿quién|quién|¿quiénes|quiénes|explica|describe|cuéntame)\s+"
+        r"(is|are|was|were|do|does|did|can|could|should|would|es|son|fue|era|son|está|están|hay)?\s*",
         "",
         query,
         flags=re.IGNORECASE,
@@ -246,7 +240,7 @@ class DocumentRetriever:
                     c_emb = candidate_embeddings.get(candidate.chunk.id)
                     if c_emb and selected_embeddings:
                         max_sim = max(
-                            _cosine(c_emb, s_emb) for s_emb in selected_embeddings
+                            cosine_similarity(list(c_emb), list(s_emb)) for s_emb in selected_embeddings
                         )
                     else:
                         max_sim = 0.0

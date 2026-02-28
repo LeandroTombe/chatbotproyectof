@@ -194,7 +194,8 @@ class TestOllamaClient:
     @patch('chat.llm_clients.ollama_client.requests.get')
     def test_is_available_false(self, mock_get, client):
         """Test is_available when Ollama is not running."""
-        mock_get.side_effect = Exception("Connection refused")
+        import requests as _requests
+        mock_get.side_effect = _requests.exceptions.ConnectionError("Connection refused")
         
         assert client.is_available() is False
     
@@ -271,9 +272,18 @@ class TestOllamaClient:
     @patch('chat.llm_clients.ollama_client.requests.post')
     def test_pull_model_success(self, mock_post, client):
         """Test pulling a model successfully."""
+        import json as _json
         mock_response = Mock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {"status": "success"}
+        mock_response.raise_for_status.return_value = None
+        # Simulate NDJSON stream: downloading progress + success event
+        mock_response.iter_lines.return_value = [
+            _json.dumps({"status": "pulling manifest"}).encode(),
+            _json.dumps({"status": "downloading", "completed": 50, "total": 100}).encode(),
+            _json.dumps({"status": "success"}).encode(),
+        ]
+        mock_response.__enter__ = Mock(return_value=mock_response)
+        mock_response.__exit__ = Mock(return_value=False)
         mock_post.return_value = mock_response
         
         result = client.pull_model("llama2")
@@ -288,8 +298,15 @@ class TestOllamaClient:
     @patch('chat.llm_clients.ollama_client.requests.post')
     def test_pull_model_default_model(self, mock_post, client):
         """Test pulling model without specifying name (uses default)."""
+        import json as _json
         mock_response = Mock()
         mock_response.status_code = 200
+        mock_response.raise_for_status.return_value = None
+        mock_response.iter_lines.return_value = [
+            _json.dumps({"status": "success"}).encode(),
+        ]
+        mock_response.__enter__ = Mock(return_value=mock_response)
+        mock_response.__exit__ = Mock(return_value=False)
         mock_post.return_value = mock_response
         
         client.pull_model()
@@ -314,7 +331,9 @@ class TestOllamaClient:
         mock_response = Mock()
         mock_response.status_code = 404
         mock_response.text = "Model not found"
-        mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError()
+        mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError(response=mock_response)
+        mock_response.__enter__ = Mock(return_value=mock_response)
+        mock_response.__exit__ = Mock(return_value=False)
         mock_post.return_value = mock_response
         
         with pytest.raises(LLMResponseError) as exc_info:

@@ -1,12 +1,13 @@
 """RAG (Retrieval-Augmented Generation) service for document-based chat."""
 from typing import List, Optional, Dict, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from chat.models import (
     Message, MessageRole, ChatResponse, 
     ConversationHistory, SourceDocument
 )
 from chat.llm_clients.base import BaseLLMClient
 from chat.security import QueryValidator, SecurityConfig
+from config.settings import settings
 from retrieval.retriever import DocumentRetriever
 
 
@@ -28,15 +29,7 @@ class RAGConfig:
     max_context_length: int = 2000
     include_sources: bool = True
     strict_mode: bool = True
-    system_prompt: str = (
-        "Eres un asistente que SOLO responde preguntas basándose EXCLUSIVAMENTE en los documentos proporcionados. "
-        "REGLAS ESTRICTAS:\n"
-        "1. NUNCA uses tu conocimiento general o preentrenado\n"
-        "2. SOLO responde si la información está explícitamente en los documentos\n"
-        "3. Si no encuentras la información en los documentos, di: 'No encontré información sobre eso en los documentos proporcionados'\n"
-        "4. NUNCA inventes o asumas información que no está en los documentos\n"
-        "5. Siempre cita las fuentes cuando respondas"
-    )
+    system_prompt: str = ""  # If empty, RAGService falls back to settings.RAG_SYSTEM_PROMPT
     context_template: str = (
         "Contexto de los documentos:\n\n{context}\n\n"
         "Basándote EXCLUSIVAMENTE en el contexto anterior, responde la siguiente pregunta:"
@@ -89,11 +82,12 @@ class RAGService:
         self.conversation_history = ConversationHistory()
         self.validator = QueryValidator(security_config or SecurityConfig())
         
-        # Add system prompt to conversation
-        if self.config.system_prompt:
+        # Use the configured system prompt; fall back to the global settings value
+        effective_prompt = self.config.system_prompt or settings.RAG_SYSTEM_PROMPT
+        if effective_prompt:
             self.conversation_history.add_message(
                 MessageRole.SYSTEM,
-                self.config.system_prompt
+                effective_prompt
             )
     
     def chat(

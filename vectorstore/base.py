@@ -223,6 +223,21 @@ class BaseVectorStore(ABC):
         """
         pass
     
+    @abstractmethod
+    def has_document(self, document_id: str) -> bool:
+        """
+        Verifica si un documento ya tiene chunks almacenados.
+        
+        Útil para evitar re-indexar documentos que ya fueron procesados.
+        
+        Args:
+            document_id: ID del documento a verificar
+            
+        Returns:
+            True si existen chunks para ese document_id, False si no
+        """
+        pass
+    
     def validate_embedding(self, embedding: List[float]) -> None:
         """
         Valida que un embedding tenga la dimensión correcta.
@@ -466,6 +481,18 @@ class InMemoryVectorStore(BaseVectorStore):
         count = len(self._chunks)
         self._chunks.clear()
         logger.info(f"Cleared vector store ({count} chunks removed)")
+    
+    def has_document(self, document_id: str) -> bool:
+        """
+        Verifica si el documento ya tiene chunks en memoria.
+        
+        Args:
+            document_id: ID del documento
+            
+        Returns:
+            True si existen chunks para ese document_id
+        """
+        return any(chunk.document_id == document_id for chunk in self._chunks.values())
     
     def get_all_chunks(self) -> List[Chunk]:
         """

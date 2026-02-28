@@ -1,15 +1,13 @@
 """
 ChromaDB implementation of vector store.
 Provides persistent storage for embeddings using ChromaDB.
+Compatible with ChromaDB >= 0.5 (new PersistentClient / EphemeralClient API).
 """
 import logging
-from turtle import distance
 from typing import List, Optional, Dict, Any
-import json
 
 try:
     import chromadb
-    from chromadb.config import Settings
     CHROMADB_AVAILABLE = True
 except ImportError:
     CHROMADB_AVAILABLE = False
@@ -59,18 +57,18 @@ class ChromaVectorStore(BaseVectorStore):
         self.persist_directory = persist_directory or str(CHROMA_DIR)
 
         try:
-            # Initialize ChromaDB client
-            self.client = chromadb.Client(  # type: ignore[misc]
-                Settings(  # type: ignore[misc]
-                    persist_directory=self.persist_directory,
-                    is_persistent=CHROMA_PERSIST,
-                )
-            )
+            # Initialize ChromaDB client using new API (chromadb >= 0.5)
+            if CHROMA_PERSIST:
+                import os
+                os.makedirs(self.persist_directory, exist_ok=True)
+                self.client = chromadb.PersistentClient(path=self.persist_directory)  # type: ignore[misc]
+            else:
+                self.client = chromadb.EphemeralClient()  # type: ignore[misc]
 
             # Get or create collection
             self.collection = self.client.get_or_create_collection(
                 name=self.collection_name,
-                metadata={"dimension": dimension}
+                metadata={"hnsw:space": "cosine"}
             )
 
             logger.info(
@@ -426,7 +424,7 @@ class ChromaVectorStore(BaseVectorStore):
                 pass
             self.collection = self.client.create_collection(
                 name=self.collection_name,
-                metadata={"dimension": self.dimension}
+                metadata={"hnsw:space": "cosine"}
             )
             logger.info(f"Cleared ChromaDB collection '{self.collection_name}'")
 
@@ -434,6 +432,23 @@ class ChromaVectorStore(BaseVectorStore):
             error_msg = f"Error clearing ChromaDB: {str(e)}"
             logger.error(error_msg)
             raise VectorStoreException(error_msg) from e
+
+    def has_document(self, document_id: str) -> bool:
+        """
+        Comprueba si ya existen chunks indexados para un documento dado.
+
+        Args:
+            document_id: ID del documento a verificar
+
+        Returns:
+            True si el documento ya está en la colección
+        """
+        try:
+            result = self.collection.get(where={"document_id": document_id}, limit=1)
+            return bool(result and result.get("ids"))
+        except Exception as e:
+            logger.warning("Error comprobando documento %s: %s", document_id, e)
+            return False
 
     def persist(self) -> None:
         """

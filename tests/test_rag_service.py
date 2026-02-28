@@ -18,8 +18,8 @@ class TestRAGConfig:
         assert config.min_relevance == 0.3
         assert config.max_context_length == 2000
         assert config.include_sources is True
-        assert "asistente" in config.system_prompt.lower()
-        assert "documentos" in config.system_prompt.lower()
+        # system_prompt defaults to empty string; effective prompt comes from settings
+        assert config.system_prompt == ""
     
     def test_custom_config(self):
         """Test custom RAG configuration."""
@@ -85,13 +85,14 @@ class TestRAGService:
         assert messages[0].content == "Custom"
     
     def test_initialization_no_system_prompt(self, mock_retriever, mock_llm_client):
-        """Test initialization without system prompt."""
+        """Test initialization with empty system_prompt falls back to settings."""
         config = RAGConfig(system_prompt="")
         service = RAGService(mock_retriever, mock_llm_client, config)
         
-        # Should have no messages in conversation
+        # Falls back to settings.RAG_SYSTEM_PROMPT (which is non-empty)
         messages = service.conversation_history.get_messages()
-        assert len(messages) == 0
+        assert len(messages) == 1
+        assert messages[0].role == MessageRole.SYSTEM
     
     def test_chat_with_relevant_results(self, rag_service, mock_retriever, mock_llm_client):
         """Test chat with relevant search results."""

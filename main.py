@@ -9,8 +9,11 @@ Flujo principal:
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -159,8 +162,114 @@ def inicializar() -> tuple[DocumentProcessor, DocumentRetriever, IngestionPipeli
     _ok("Recuperador   : listo  (estándar · MMR · expandida)")
     _ok("Pipeline      : listo  (.pdf)")
 
+    # ── Ingesta automática de documentos pendientes ──────────────────────────
+    _ingesta_inicial(processor, vector_store)
+
     print("\n  Sistema listo.\n")
     return processor, retriever, pipeline, vector_store
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Manifest de ingesta
+# ─────────────────────────────────────────────────────────────────────────────
+# Guardamos un JSON liviano en disco con la clave de cada archivo ya indexado.
+# La clave es «nombre|tamaño|mtime» — verificable en microsegundos con stat().
+# Así, en arranques subsiguientes NO leemos los PDFs ni consultamos ChromaDB.
+
+_MANIFEST_PATH = Path(settings.DATA_DIR) / ".etl_manifest.json"
+
+
+def _file_key(path: Path) -> str:
+    """Clave estable de un archivo: nombre + tamaño + fecha de modificación."""
+    s = path.stat()
+    return f"{path.name}|{s.st_size}|{int(s.st_mtime)}"
+
+
+def _load_manifest() -> dict:
+    """Carga el manifiesto de archivos ya indexados."""
+    try:
+        if _MANIFEST_PATH.exists():
+            return json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("No se pudo leer el manifiesto: %s", exc)
+    return {}
+
+
+def _save_manifest(manifest: dict) -> None:
+    """Persiste el manifiesto en disco."""
+    try:
+        _MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _MANIFEST_PATH.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        logger.warning("No se pudo guardar el manifiesto: %s", exc)
+
+
+def _ingesta_inicial(processor: DocumentProcessor, vector_store: BaseVectorStore) -> None:
+    """
+    Escanea DATA_DIR al arrancar e indexa solo los PDFs nuevos o modificados.
+
+    Usa un manifiesto liviano en disco para saber qué archivos ya fueron
+    procesados.  En arranques normales (nada nuevo) no imprime nada y termina
+    en milisegundos.
+    """
+    data_dir = Path(settings.DATA_DIR)
+    if not data_dir.exists():
+        data_dir.mkdir(parents=True, exist_ok=True)
+        return
+
+    pdfs = sorted(data_dir.glob("**/*.pdf"))
+    if not pdfs:
+        return
+
+    manifest = _load_manifest()
+
+    # Si el vector store está vacío, el manifiesto puede estar desincronizado
+    # (ej: se borró la colección de ChromaDB).  Lo reseteamos para re-indexar.
+    try:
+        if manifest and hasattr(vector_store, "count") and vector_store.count() == 0:
+            logger.info("Vector store vacío — reseteando manifiesto.")
+            manifest = {}
+    except Exception:
+        pass
+
+    pendientes = [pdf for pdf in pdfs if _file_key(pdf) not in manifest]
+
+    if not pendientes:
+        # Todo ya indexado — arranque silencioso
+        return
+
+    _titulo("INGESTA AUTOMÁTICA DE DOCUMENTOS")
+    print(f"\n  {len(pendientes)} documento(s) nuevo(s) o modificado(s).\n")
+
+    for pdf in pendientes:
+        # Seguridad extra: si ChromaDB ya tiene el doc (ej: migración desde
+        # la versión anterior sin manifiesto), solo actualizar el manifiesto.
+        if hasattr(vector_store, "has_document"):
+            try:
+                content_hash = hashlib.sha256(pdf.read_bytes()).hexdigest()[:16]
+                if vector_store.has_document(f"doc_{content_hash}"):  # type: ignore[attr-defined]
+                    _ok(f"{pdf.name}  →  ya en ChromaDB, marcando como indexado")
+                    manifest[_file_key(pdf)] = pdf.name
+                    _save_manifest(manifest)
+                    continue
+            except Exception:
+                pass
+
+        print(f"  \u23f3 {pdf.name} \u2026", end="", flush=True)
+        t0 = time.monotonic()
+        try:
+            doc = processor.process_document(str(pdf))
+            elapsed = time.monotonic() - t0
+            _ok(f"\r{pdf.name}  \u2192  {doc.total_chunks} fragmentos  ({elapsed:.1f}s)")
+            # Registrar en manifiesto SOLO si la indexación fue exitosa
+            manifest[_file_key(pdf)] = pdf.name
+            _save_manifest(manifest)
+        except Exception as exc:
+            _error(f"\r{pdf.name}  \u2192  {exc}")
+            logger.exception("_ingesta_inicial: %s", pdf)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -405,6 +514,24 @@ def menu_chat(retriever: DocumentRetriever) -> None:
     _chat_interactivo(rag_service)
 
 
+def _fmt_bytes(n: int) -> str:
+    """Convierte bytes a cadena legible (GB / MB)."""
+    if n <= 0:
+        return ""
+    if n >= 1_073_741_824:
+        return f"{n / 1_073_741_824:.1f} GB"
+    return f"{n / 1_048_576:.0f} MB"
+
+
+def _barra_progreso(completado: int, total: int, ancho: int = 30) -> str:
+    """Devuelve una barra de progreso ASCII."""
+    if total <= 0:
+        return "░" * ancho
+    pct = min(completado / total, 1.0)
+    lleno = int(pct * ancho)
+    return "█" * lleno + "░" * (ancho - lleno)
+
+
 def _seleccionar_o_descargar_modelo(
     cliente: "OllamaClient", info: dict
 ) -> Optional[str]:
@@ -412,17 +539,23 @@ def _seleccionar_o_descargar_modelo(
 
     Retorna el nombre del modelo elegido, o None si el usuario cancela.
     """
-    modelos: list = info.get("all_models") or []
+    modelos_detalle: list = info.get("all_models_detail") or []
+    # Fallback si no hay detalle (compat. con versiones anteriores)
+    if not modelos_detalle:
+        modelos_detalle = [{"name": n, "size": 0} for n in (info.get("all_models") or [])]
 
     while True:
         print()
         _linea()
         print("  ¿Qué querés hacer?\n")
 
-        for i, m in enumerate(modelos, start=1):
-            print(f"    {i}.  Usar  '{m}'")
+        for i, m in enumerate(modelos_detalle, start=1):
+            nombre = m["name"]
+            tam    = _fmt_bytes(m.get("size", 0))
+            sufijo = f"  ({tam})" if tam else ""
+            print(f"    {i}.  Usar  '{nombre}'{sufijo}")
 
-        n = len(modelos)
+        n = len(modelos_detalle)
         print(f"    {n + 1}.  Descargar un modelo nuevo")
         print(f"    0.  Cancelar\n")
 
@@ -438,20 +571,42 @@ def _seleccionar_o_descargar_modelo(
             if not nombre:
                 _aviso("Nombre vacío — operación cancelada.")
                 return None
+
             print(f"\n  Descargando '{nombre}'… esto puede tardar varios minutos.")
-            print("  No cerrés la ventana.\n")
+            print(f"  No cerrés la ventana.\n")
+
+            # ── Callback de progreso ────────────────────────────────────────
+            _ultimo_estado: list[str] = [""]
+
+            def _on_progress(status: str, completado: int, total: int) -> None:
+                if status == "success":
+                    return
+                barra = _barra_progreso(completado, total)
+                pct   = f"{completado / total * 100:5.1f}%" if total > 0 else "  ---  "
+                info_bytes = (
+                    f"  {_fmt_bytes(completado)} / {_fmt_bytes(total)}"
+                    if total > 0 else ""
+                )
+                estado_corto = status[:35] if status else ""
+                linea = f"\r  [{barra}] {pct}{info_bytes}   {estado_corto}          "
+                print(linea, end="", flush=True)
+                _ultimo_estado[0] = status
+            # ───────────────────────────────────────────────────────────────
+
             try:
-                cliente.pull_model(nombre)
+                cliente.pull_model(nombre, on_progress=_on_progress)
+                print()  # salto de línea tras la barra
                 _ok(f"Modelo '{nombre}' descargado correctamente.")
                 return nombre
             except Exception as exc:
+                print()
                 _error(f"No se pudo descargar '{nombre}': {exc}")
                 return None
 
         try:
             idx = int(opcion) - 1
             if 0 <= idx < n:
-                return modelos[idx]
+                return modelos_detalle[idx]["name"]
         except ValueError:
             pass
 

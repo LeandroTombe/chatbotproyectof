@@ -102,17 +102,3 @@ class RetrievalConfig:
             raise ValueError("top_k debe ser mayor a 0")
         if not 0 <= self.min_score <= 1:
             raise ValueError("min_score debe estar entre 0 y 1")
-
-
-@dataclass
-class Query:
-    """Representa una consulta del usuario"""
-    id: str
-    text: str
-    embedding: Optional[List[float]] = None
-    created_at: datetime = field(default_factory=datetime.now)
-    results: List[SearchResult] = field(default_factory=list)
-    
-    def filter_by_score(self, min_score: float) -> List[SearchResult]:
-        """Filtra resultados por score mínimo"""
-        return [r for r in self.results if r.score >= min_score]
