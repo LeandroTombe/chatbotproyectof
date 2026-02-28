@@ -44,7 +44,7 @@ RUN pip install --upgrade pip setuptools wheel && \
     # Instalar todas las dependencias excepto torch
     pip install -r requirements.cpu.txt && \
     # Instalar PyTorch CPU desde índice oficial (más ligero)
-    pip install torch==2.10.0 --extra-index-url https://download.pytorch.org/whl/cpu && \
+    pip install "torch>=2.0.0" --extra-index-url https://download.pytorch.org/whl/cpu && \
     # Limpiar cache y archivos temporales
     pip cache purge && \
     find /opt/venv -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
@@ -84,12 +84,12 @@ RUN useradd -m -u 1000 -s /bin/bash appuser && \
 # Switch to non-root user
 USER appuser
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python -c "import sys; sys.exit(0)"
+# Health check using the API status endpoint
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -f http://localhost:9000/api/chat/status || exit 1
 
-# Expose port (if needed for API in the future)
-EXPOSE 8000
+# Expose API port
+EXPOSE 9000
 
-# Default command
-CMD ["python", "main.py"]
+# Start the API server
+CMD ["python", "server.py"]

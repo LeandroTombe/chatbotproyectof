@@ -20,6 +20,7 @@ colorama==0.4.6
 cryptography==46.0.5
 distro==1.9.0
 durationpy==0.10
+fastapi>=0.115.0
 filelock==3.20.3
 flatbuffers==25.12.19
 fsspec==2026.2.0
@@ -80,6 +81,7 @@ pyproject_hooks==1.2.0
 pytest==9.0.2
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
+python-multipart>=0.0.9
 PyYAML==6.0.3
 referencing==0.37.0
 regex==2026.1.15

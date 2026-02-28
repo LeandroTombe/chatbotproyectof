@@ -96,11 +96,10 @@ services:
     restart: unless-stopped
     networks:
       - chatbot-network
+    ports:
+      - "9000:9000"
     stdin_open: true
     tty: true
-    # Uncomment to expose API port in the future
-    # ports:
-    #   - "8000:8000"
 
 # ============================================================================
 # Volumes
