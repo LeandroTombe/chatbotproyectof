@@ -17,8 +17,9 @@ from typing import List
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
-from api.dependencies import get_ingestion_pipeline
+from api.dependencies import get_ingestion_pipeline, get_vector_store
 from ingestion.pipeline import IngestionPipeline
+from vectorstore.base import BaseVectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -120,3 +121,37 @@ async def upload_documents(
         failed=len(results) - successful,
         results=results,
     )
+
+
+class DeleteDocumentResponse(BaseModel):
+    document_id: str
+    chunks_deleted: int
+    success: bool
+
+
+@router.delete(
+    "/{document_id}",
+    response_model=DeleteDocumentResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Delete a document and all its chunks from the vector store",
+)
+def delete_document(
+    document_id: str,
+    vector_store: BaseVectorStore = Depends(get_vector_store),
+) -> DeleteDocumentResponse:
+    """Remove all chunks for *document_id* from the vector store so the
+    document can be re-ingested with updated metadata."""
+    try:
+        count = vector_store.delete_chunks_by_document(document_id)
+        logger.info("Deleted document %s (%d chunks)", document_id, count)
+        return DeleteDocumentResponse(
+            document_id=document_id,
+            chunks_deleted=count,
+            success=True,
+        )
+    except Exception as exc:
+        logger.exception("Error deleting document %s", document_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting document: {exc}",
+        ) from exc

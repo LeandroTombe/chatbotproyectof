@@ -58,6 +58,7 @@ class TxtLoader(BaseLoader):
             status=ProcessingStatus.COMPLETED,
             content=content,
             metadata={
+                "file_name": path.name,
                 "file_type": path.suffix.lstrip("."),
                 "char_count": len(content),
                 "file_size": path.stat().st_size,

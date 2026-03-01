@@ -49,6 +49,13 @@ def get_ingestion_pipeline() -> IngestionPipeline:
     return _ingestion_pipeline
 
 
+def get_vector_store() -> BaseVectorStore:
+    """FastAPI dependency: returns the initialized vector store."""
+    if _vector_store is None:
+        raise RuntimeError("VectorStore not initialized. Server may still be starting.")
+    return _vector_store
+
+
 def get_llm_client() -> OllamaClient:
     """FastAPI dependency: returns the initialized OllamaClient."""
     if _llm_client is None:

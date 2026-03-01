@@ -82,6 +82,7 @@ class PDFLoader(BaseLoader):
                 processed_at=datetime.now(),
                 metadata={
                     "content": content,
+                    "file_name": path.name,
                     "file_type": "pdf",
                     "file_size": path.stat().st_size,
                     "page_count": page_count,

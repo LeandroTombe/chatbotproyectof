@@ -80,10 +80,13 @@ class DocumentProcessor:
             document.mark_processing()
 
             text = self._extract_text(document)
+            # Ensure file_name is always present in chunk metadata so the
+            # vector store can resolve a human-readable document_name.
+            chunk_meta = {**document.metadata, "file_name": document.file_name}
             chunks = self.chunker.chunk_text(
                 text=text,
                 document_id=document.id,
-                metadata=document.metadata,
+                metadata=chunk_meta,
             )
 
             if not chunks:

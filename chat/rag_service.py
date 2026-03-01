@@ -181,7 +181,10 @@ class RAGService:
                     chunk_index=result.chunk.chunk_index,
                     content=result.chunk.content[:200] + "...",  # Truncate for brevity
                     relevance_score=result.score,
-                    metadata=result.chunk.metadata
+                    metadata={
+                        **result.chunk.metadata,
+                        "document_name": result.document_name,
+                    }
                 )
                 for result in relevant_results
             ]
