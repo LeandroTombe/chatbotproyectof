@@ -8,6 +8,7 @@ import logging
 from ingestion.loaders.base_loader import BaseLoader, LoaderException
 from ingestion.loaders.pdf_loader import PDFLoader
 from ingestion.loaders.txt_loader import TxtLoader
+from ingestion.loaders.csv_loader import CsvLoader
 from domain.models import Document
 
 logger = logging.getLogger(__name__)
@@ -35,9 +36,12 @@ def get_loader(file_path: str, **kwargs) -> BaseLoader:
     if extension in (".txt", ".md"):
         return TxtLoader(**kwargs)
 
+    if extension in (".csv", ".tsv"):
+        return CsvLoader(**kwargs)
+
     raise LoaderException(
         f"No loader available for file type: {extension}. "
-        f"Supported types: .pdf, .txt, .md"
+        f"Supported types: .pdf, .txt, .md, .csv, .tsv"
     )
 
 

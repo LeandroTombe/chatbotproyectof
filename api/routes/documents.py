@@ -28,7 +28,9 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 ALLOWED_CONTENT_TYPES = {
     "application/pdf",
     "text/plain",
-    "application/octet-stream",  # some clients send this for .txt files
+    "text/csv",
+    "application/csv",
+    "application/octet-stream",  # some clients send this for .txt / .csv files
 }
 MAX_FILE_SIZE_MB = 50
 
