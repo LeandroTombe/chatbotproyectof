@@ -16,6 +16,9 @@ services:
     environment:
       - OLLAMA_ORIGINS=*
       - OLLAMA_HOST=0.0.0.0
+      # Descomentar si usas GPU NVIDIA:
+      # - NVIDIA_VISIBLE_DEVICES=all
+      # - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 30s
@@ -23,7 +26,11 @@ services:
       retries: 5
       start_period: 60s
     restart: unless-stopped
-    # Configuración de GPU (descomentala si tienes NVIDIA GPU disponible)
+
+    # --------------------------------------------------------------------------
+    # OPCIÓN A: Con GPU NVIDIA (descomentar si tienes GPU disponible)
+    # Requiere: NVIDIA Container Toolkit y drivers >= 525
+    # --------------------------------------------------------------------------
     # deploy:
     #   resources:
     #     reservations:
@@ -31,13 +38,16 @@ services:
     #         - driver: nvidia
     #           count: all
     #           capabilities: [gpu]
-    
-    # Límites de recursos (sin GPU)
+
+    # --------------------------------------------------------------------------
+    # OPCIÓN B: Sin GPU - solo CPU (descomentar si NO tienes GPU)
+    # --------------------------------------------------------------------------
     deploy:
-      resources:
-        limits:
-          cpus: '4'
-          memory: 8G
+       resources:
+         limits:
+           cpus: '4'
+           memory: 8G
+
     networks:
       - chatbot-network
 
