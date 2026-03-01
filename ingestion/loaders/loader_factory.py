@@ -7,6 +7,7 @@ import logging
 
 from ingestion.loaders.base_loader import BaseLoader, LoaderException
 from ingestion.loaders.pdf_loader import PDFLoader
+from ingestion.loaders.txt_loader import TxtLoader
 from domain.models import Document
 
 logger = logging.getLogger(__name__)
@@ -31,13 +32,12 @@ def get_loader(file_path: str, **kwargs) -> BaseLoader:
     if extension == ".pdf":
         return PDFLoader(**kwargs)
 
-    # Future loaders can be registered here:
-    # ".txt" / ".md"  → TextLoader
-    # ".docx"         → DocxLoader
+    if extension in (".txt", ".md"):
+        return TxtLoader(**kwargs)
 
     raise LoaderException(
         f"No loader available for file type: {extension}. "
-        f"Supported types: .pdf"
+        f"Supported types: .pdf, .txt, .md"
     )
 
 
