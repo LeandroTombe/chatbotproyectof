@@ -94,6 +94,7 @@ class RAGService:
         self,
         query: str,
         document_ids: Optional[List[str]] = None,
+        case_context: Optional[str] = None,
         **llm_kwargs
     ) -> ChatResponse:
         """Have a conversation with RAG-enhanced responses.
@@ -101,6 +102,10 @@ class RAGService:
         Args:
             query: User's question or message
             document_ids: Optional list of document IDs to search within
+            case_context: Structured case metadata (investigators, documents,
+                          etc.) always prepended to the context block so the
+                          LLM can answer administrative questions regardless of
+                          vector search relevance.
             **llm_kwargs: Additional parameters for LLM generation
             
         Returns:
@@ -139,11 +144,18 @@ class RAGService:
         
         # 2. Build context from retrieved documents
         context = self._build_context(relevant_results)
+
+        # 2b. Combine case metadata (always available) with RAG context
+        if case_context:
+            metadata_block = f"=== METADATOS DEL CASO (siempre disponibles) ===\n{case_context}\n"
+            combined_context = metadata_block + ("\n" + context if context else "")
+        else:
+            combined_context = context
         
         # 3. Format the prompt with context
-        if context:
+        if combined_context:
             contextualized_query = self.config.context_template.format(
-                context=context
+                context=combined_context
             ) + f"\n\nPregunta: {query}"
         else:
             # No relevant context found
@@ -193,7 +205,8 @@ class RAGService:
         metadata = {
             "model": self.llm_client.config.model_name,
             "num_sources": len(sources),
-            "has_context": bool(context),
+            "has_context": bool(combined_context),
+            "has_case_context": bool(case_context),
             "query": query
         }
         

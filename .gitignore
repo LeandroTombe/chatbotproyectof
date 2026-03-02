@@ -241,3 +241,5 @@ backups/
 # Docker override files (for local development)
 docker-compose.override.yml
 .dockerignore.local
+
+docker-compose.yml

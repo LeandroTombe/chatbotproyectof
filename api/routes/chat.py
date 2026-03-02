@@ -43,8 +43,16 @@ class ChatRequest(BaseModel):
         default=None,
         description="Optional list of document IDs to restrict context retrieval",
     )
+    case_context: Optional[str] = Field(
+        default=None,
+        description=(
+            "Structured metadata about the case (investigators, file list, etc.) "
+            "that is always injected into the prompt so the LLM can answer "
+            "administrative questions without relying on vector search."
+        ),
+    )
 
-    model_config = {"json_schema_extra": {"example": {"message": "¿Qué dice el documento sobre contratos?"}}}
+    model_config = {"json_schema_extra": {"example": {"message": "¿Quiénes son los investigadores del caso?"}}}
 
 
 class SourceDocumentResponse(BaseModel):
@@ -104,7 +112,11 @@ def chat(
     grounded in the indexed documents.
     """
     try:
-        response = rag.chat(query=body.message, document_ids=body.document_ids)
+        response = rag.chat(
+            query=body.message,
+            document_ids=body.document_ids,
+            case_context=body.case_context,
+        )
     except Exception as exc:
         logger.exception("Error generating chat response")
         raise HTTPException(
