@@ -94,7 +94,7 @@ class SearchResult:
 class RetrievalConfig:
     """Configuración para el retrieval de chunks"""
     top_k: int = 5  # Número de chunks a recuperar
-    min_score: float = 0.7  # Score mínimo de similitud (0-1)
+    min_score: float = 0.0  # Score mínimo de similitud (0-1) — filtrado real en RAGService
     
     def validate(self):
         """Valida la configuración"""

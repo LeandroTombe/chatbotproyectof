@@ -24,8 +24,8 @@ class RAGConfig:
         context_template: Template for formatting retrieved context
         strict_mode: If True, refuses to answer without relevant documents
     """
-    top_k: int = 3
-    min_relevance: float = 0.3
+    top_k: int = 5
+    min_relevance: float = 0.2
     max_context_length: int = 2000
     include_sources: bool = True
     strict_mode: bool = True
@@ -130,9 +130,10 @@ class RAGService:
         if document_ids:
             where = {"document_id": {"$in": document_ids}}
         
-        search_results = self.retriever.search(
+        search_results = self.retriever.search_expanded(
             query=query,
             top_k=self.config.top_k,
+            min_score=0.0,  # No pre-filter — RAGService applies min_relevance below
             where=where
         )
         

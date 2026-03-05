@@ -242,4 +242,3 @@ backups/
 docker-compose.override.yml
 .dockerignore.local
 
-docker-compose.yml

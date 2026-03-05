@@ -441,9 +441,19 @@ class DocumentRetriever:
     # ------------------------------------------------------------------
 
     def _embed_query(self, query: str) -> List[float]:
-        """Embed a query string, raising RetrieverException on failure."""
+        """Embed a query string using the correct query prefix (if supported).
+
+        E5 and similar models require a ``"query: "`` prefix for search queries
+        and a ``"passage: "`` prefix for indexed documents.  The embedder exposes
+        ``embed_query()`` for this purpose; fall back to ``embed_text()`` for
+        providers that don't distinguish.
+        """
         try:
-            emb = self.embedder.embed_text(query)
+            # Prefer embed_query() so E5-family models get the right prefix.
+            if hasattr(self.embedder, "embed_query"):
+                emb = self.embedder.embed_query(query)
+            else:
+                emb = self.embedder.embed_text(query)
             logger.debug("_embed_query | dim=%d", len(emb))
             return emb
         except Exception as exc:
